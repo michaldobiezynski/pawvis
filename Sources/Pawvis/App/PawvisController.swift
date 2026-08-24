@@ -163,6 +163,23 @@ final class PawvisController: ObservableObject {
                 // and drop any stale dark warning until it has looked.
                 self.signal.reset()
                 self.cameraSignalDark = false
+                // Let go of anything held, here rather than in any one
+                // caller, because *every* swap arrives through this hook: the
+                // user switching cameras in the picker, the disconnect
+                // fallback, a chosen camera returning. A swap is a
+                // coordinate-space discontinuity exactly like the attention
+                // gate closing — the new camera's field of view maps the same
+                // hand to a different point, so a press carried across it
+                // finishes somewhere the user never chose. Worse, if the new
+                // camera's first frame lands inside the tracking-loss grace
+                // and has a hand in it, the engine *inherits* the press
+                // instead of releasing it, and a drag lands wherever the new
+                // mapping put the cursor.
+                guard self.trackingActive, !self.trainingActive else { return }
+                self.releaseEverything()
+                self.engine.reset()
+                self.handsDetected = 0
+                self.grabbing = false
             }
         }
         camera.onFailure = { [weak self] reason in
@@ -178,18 +195,11 @@ final class PawvisController: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self, self.trackingActive else { return }
                 Log.camera.info("Camera fell back: \(gone, privacy: .public) → \(now, privacy: .public)")
-                // Let go of anything held before the new camera's first
-                // frame. The old failure path released as a side effect of
-                // entering the failure state; a hand-over must keep that
-                // guarantee without the failure. The engine would eventually
-                // release through its tracking-loss grace once frames
-                // resumed, but "eventually" is not the standard for a
-                // synthetic button: the hand that was pressing is, by
-                // definition, no longer being watched.
-                self.releaseEverything()
-                self.engine.reset()
-                self.handsDetected = 0
-                self.grabbing = false
+                // Anything held was already released by `onWillReconfigure`,
+                // which the disconnect posts to the main queue before this
+                // (same queue, so it runs first). The old failure path
+                // released as a side effect of entering the failure state;
+                // that guarantee now lives with the swap itself.
                 self.gestureNotice = (
                     text: "🐾 \(gone) disconnected — using \(now)",
                     until: CACurrentMediaTime() + Self.gestureNoticeSeconds)

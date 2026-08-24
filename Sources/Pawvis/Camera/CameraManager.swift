@@ -312,11 +312,15 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             let input = try AVCaptureDeviceInput(device: device)
             guard session.canAddInput(input) else {
                 Log.camera.error("Cannot add camera input")
+                // The session has no input now: reporting nothing here would
+                // leave the UI naming the camera that used to be attached.
+                DispatchQueue.main.async { self.onDeviceChanged?(nil) }
                 return
             }
             session.addInput(input)
         } catch {
             Log.camera.error("Camera input error: \(error.localizedDescription)")
+            DispatchQueue.main.async { self.onDeviceChanged?(nil) }
             return
         }
 

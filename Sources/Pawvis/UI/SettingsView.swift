@@ -169,11 +169,18 @@ private struct GeneralSettingsTab: View {
     }
 
     /// Record the pick *and* its display name, so an absent camera can be
-    /// named later instead of shown as a raw uniqueID.
+    /// named later instead of shown as a raw uniqueID. Never nulls a good
+    /// name: see the twin in `MenuContentView`.
     private func pickCamera(_ id: String) {
-        store.settings.general.cameraDeviceID = id.isEmpty ? nil : id
-        store.settings.general.cameraDeviceName =
-            id.isEmpty ? nil : cameras.first(where: { $0.id == id })?.name
+        guard !id.isEmpty else {
+            store.settings.general.cameraDeviceID = nil
+            store.settings.general.cameraDeviceName = nil
+            return
+        }
+        store.settings.general.cameraDeviceID = id
+        if let name = cameras.first(where: { $0.id == id })?.name {
+            store.settings.general.cameraDeviceName = name
+        }
     }
 
     /// The rule, then the live state. The second half matters most when a

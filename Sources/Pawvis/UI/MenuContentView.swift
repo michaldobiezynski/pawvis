@@ -221,9 +221,23 @@ struct MenuContentView: View {
     /// Record the pick *and* its display name: a uniqueID cannot be shown to
     /// anyone, so the name is what lets the picker name an absent camera.
     private func pickCamera(_ id: String) {
-        settingsStore.settings.general.cameraDeviceID = id.isEmpty ? nil : id
-        settingsStore.settings.general.cameraDeviceName =
-            id.isEmpty ? nil : cameras.first(where: { $0.id == id })?.name
+        guard !id.isEmpty else {
+            settingsStore.settings.general.cameraDeviceID = nil
+            settingsStore.settings.general.cameraDeviceName = nil
+            return
+        }
+        settingsStore.settings.general.cameraDeviceID = id
+        // Only overwrite the remembered name when this id is actually in the
+        // current enumeration. Re-selecting the "(not connected)" entry — or
+        // clicking a camera that vanished between the menu drawing and the
+        // click — looks up nothing, and writing that nil would strand the
+        // pick under generic copy forever, which is the exact state the name
+        // is remembered to avoid. The kept name always belongs to this id:
+        // the only selectable ids are Automatic, a present camera, or the
+        // absent pick itself.
+        if let name = cameras.first(where: { $0.id == id })?.name {
+            settingsStore.settings.general.cameraDeviceName = name
+        }
     }
 
     private struct Warning {
