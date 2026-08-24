@@ -59,6 +59,50 @@ final class CameraSelectionPolicyTests: XCTestCase {
         XCTAssertEqual(choose(pick: "usb", available: [iphone]), "iphone")
     }
 
+    // MARK: Picker presentation
+
+    private func presentation(
+        pick: String?, name: String? = nil, available: [Candidate]
+    ) -> CameraSelectionPolicy.PickPresentation {
+        CameraSelectionPolicy.presentation(pick: pick, pickName: name, availableIDs: available.map(\.id))
+    }
+
+    func testNoPickPresentsAsAutomatic() {
+        XCTAssertEqual(presentation(pick: nil, available: [builtIn, iphone]), .automatic)
+    }
+
+    func testAPresentPickPresentsAsConnected() {
+        XCTAssertEqual(
+            presentation(pick: "iphone", name: "iPhone Camera", available: [builtIn, iphone]),
+            .connected(id: "iphone"))
+    }
+
+    /// The unplug case: the pick is gone, so the picker names what it is
+    /// waiting for rather than showing a raw id or matching nothing at all.
+    func testAnAbsentPickPresentsAsAwaitingReturnWithItsName() {
+        XCTAssertEqual(
+            presentation(pick: "iphone", name: "iPhone Camera", available: [builtIn]),
+            .awaitingReturn(id: "iphone", name: "iPhone Camera"))
+    }
+
+    /// Picks stored before the name was remembered still present correctly;
+    /// the caller supplies generic copy for a nil name.
+    func testAnAbsentPickWithoutARememberedNameCarriesNoName() {
+        XCTAssertEqual(
+            presentation(pick: "iphone", available: [builtIn]),
+            .awaitingReturn(id: "iphone", name: nil))
+        XCTAssertEqual(
+            presentation(pick: "iphone", name: "", available: [builtIn]),
+            .awaitingReturn(id: "iphone", name: nil))
+    }
+
+    /// With no cameras at all a pick is still awaited, not silently dropped.
+    func testAPickIsAwaitedEvenWithNoCamerasPresent() {
+        XCTAssertEqual(
+            presentation(pick: "iphone", name: "iPhone Camera", available: []),
+            .awaitingReturn(id: "iphone", name: "iPhone Camera"))
+    }
+
     // MARK: isAutomatic
 
     func testIsAutomaticMeansNoPickOrAPickThatIsGone() {

@@ -41,6 +41,11 @@ final class PawvisController: ObservableObject {
     /// both true and both useless when the real problem is that the camera
     /// sees nothing.
     @Published private(set) var cameraSignalDark = false
+    /// The camera the session is configured onto, by name, or nil while
+    /// there is none. The pickers show it when the picked camera is away,
+    /// so "iPhone Camera (not connected)" can be followed by the camera
+    /// that is actually carrying tracking meanwhile.
+    @Published private(set) var activeCameraName: String?
 
     private let camera = CameraManager()
     private let tracking = HandTrackingService()
@@ -164,6 +169,34 @@ final class PawvisController: ObservableObject {
             MainActor.assumeIsolated {
                 self?.enterCameraFailure(reason)
             }
+        }
+        // The picked camera left and another took over. Capture never
+        // stopped, so this is a notice: no failure state, no overlay
+        // teardown, nothing released. The pick is kept and re-adopted when
+        // the camera returns, which is what the pill says.
+        camera.onDeviceFallback = { [weak self] gone, now in
+            MainActor.assumeIsolated {
+                guard let self, self.trackingActive else { return }
+                Log.camera.info("Camera fell back: \(gone, privacy: .public) → \(now, privacy: .public)")
+                // Let go of anything held before the new camera's first
+                // frame. The old failure path released as a side effect of
+                // entering the failure state; a hand-over must keep that
+                // guarantee without the failure. The engine would eventually
+                // release through its tracking-loss grace once frames
+                // resumed, but "eventually" is not the standard for a
+                // synthetic button: the hand that was pressing is, by
+                // definition, no longer being watched.
+                self.releaseEverything()
+                self.engine.reset()
+                self.handsDetected = 0
+                self.grabbing = false
+                self.gestureNotice = (
+                    text: "🐾 \(gone) disconnected — using \(now)",
+                    until: CACurrentMediaTime() + Self.gestureNoticeSeconds)
+            }
+        }
+        camera.onDeviceChanged = { [weak self] name in
+            MainActor.assumeIsolated { self?.activeCameraName = name }
         }
         camera.onInterruption = { [weak self] reason in
             MainActor.assumeIsolated {
@@ -644,6 +677,21 @@ final class PawvisController: ObservableObject {
         guard trackingActive, !trainingActive, !asleep, !pausedForLock else { return }
         let now = CACurrentMediaTime()
         if let failure = cameraFailure {
+            // Frames are arriving again: the failure is over. This lives in
+            // the watchdog, not in `processFrame`, because processed frames
+            // are the wrong evidence — the idle throttle and the attention
+            // gate both drop frames before they are processed, so a camera
+            // that recovered while the user happened to be looking away kept
+            // showing "camera disconnected" until they looked back (measured:
+            // 16 s after an unplug that had already fallen back in 6 ms).
+            // Captured frames are what "the camera is delivering" means, and
+            // a count that has advanced past the mark is the only proof of it
+            // that a warm-up grace cannot fake.
+            if let mark = failureFrameMark,
+               throttle.capturedFrames >= mark &+ Self.framesProvingRecovery {
+                clearCameraFailure()
+                return
+            }
             // Keep the pill's copy of the reason alive. StatusPillPolicy
             // still times it out and honors the ✕, exactly like the
             // Accessibility warning; the menu line is the copy that stays.
@@ -665,10 +713,23 @@ final class PawvisController: ObservableObject {
             engine.reset()
             handsDetected = 0
             grabbing = false
+            // Remember how many frames had been captured when the failure
+            // began: the watchdog clears it once that count has moved, which
+            // is the only unambiguous proof that a camera is delivering
+            // again. See `watchdogTick`.
+            failureFrameMark = throttle.capturedFrames
         }
         cameraFailure = reason
         overlay.parkForFailure(reason, now: CACurrentMediaTime())
     }
+
+    /// Captured-frame count when the current failure began, or nil while
+    /// there is no failure.
+    private var failureFrameMark: UInt64?
+    /// Frames that must arrive past the mark before a failure is called
+    /// over. More than one, so a straggler already in flight when capture
+    /// died cannot clear a genuine failure by itself.
+    private static let framesProvingRecovery: UInt64 = 3
 
     /// Frames are back (or the interruption ended): un-park and say so.
     /// Rendering resumes with the next frame; the engine restarts clean.
@@ -676,6 +737,7 @@ final class PawvisController: ObservableObject {
         armStallClock(grace: Self.startupGraceSeconds)
         guard cameraFailure != nil, trackingActive else { return }
         cameraFailure = nil
+        failureFrameMark = nil
         engine.reset()
         overlay.endFailure()
         gestureNotice = (text: "🐾 Camera is back",

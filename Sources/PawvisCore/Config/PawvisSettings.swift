@@ -43,6 +43,12 @@ public struct GeneralConfig: Codable, Equatable, Sendable {
     public var launchAtLogin: Bool = true
     /// AVCaptureDevice uniqueID; nil = system default camera.
     public var cameraDeviceID: String? = nil
+    /// The picked camera's display name as it read when it was chosen.
+    /// Purely for copy: a uniqueID is meaningless to a user, so when the
+    /// pick is unplugged the pickers can still say *which* camera they are
+    /// waiting for ("iPhone Camera (not connected)") instead of showing a
+    /// raw UUID. Never used to select a device — ids do that.
+    public var cameraDeviceName: String? = nil
     /// Map hand space across all displays instead of just the main one.
     public var controlAllDisplays: Bool = false
     /// Live tracking numbers (fps, pinch ratio, tip confidences) in the
@@ -52,7 +58,7 @@ public struct GeneralConfig: Codable, Equatable, Sendable {
     public init() {}
 
     enum CodingKeys: String, CodingKey {
-        case startTrackingOnLaunch, launchAtLogin, cameraDeviceID
+        case startTrackingOnLaunch, launchAtLogin, cameraDeviceID, cameraDeviceName
         case controlAllDisplays, showDiagnostics
     }
 
@@ -62,6 +68,7 @@ public struct GeneralConfig: Codable, Equatable, Sendable {
         if let v = try? c.decodeIfPresent(Bool.self, forKey: .startTrackingOnLaunch) { startTrackingOnLaunch = v }
         if let v = try? c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) { launchAtLogin = v }
         if let v = try? c.decodeIfPresent(String.self, forKey: .cameraDeviceID) { cameraDeviceID = v }
+        if let v = try? c.decodeIfPresent(String.self, forKey: .cameraDeviceName) { cameraDeviceName = v }
         if let v = try? c.decodeIfPresent(Bool.self, forKey: .controlAllDisplays) { controlAllDisplays = v }
         if let v = try? c.decodeIfPresent(Bool.self, forKey: .showDiagnostics) { showDiagnostics = v }
     }

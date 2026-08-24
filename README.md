@@ -268,9 +268,17 @@ One thing to know about the iPhone: Continuity Camera uses its **rear**
 camera (the lenses on the back), not the selfie camera, so point the back of
 the phone at you, screen facing away. If Pawvis says the camera shows no
 image, the lens is looking at nothing (a phone lying face-down, or a covered
-webcam); aim it at you and tracking resumes on its own. Apple does not let a
-Mac app use the iPhone's front camera, so there is no front/rear choice for
-the phone.
+webcam); aim it at you and tracking resumes on its own. Apple gives Mac apps
+no way to reach the iPhone's front camera, so there is no front/rear choice
+to offer: `AVCaptureDevice.position` is read-only and AVFoundation has no
+lens selector, and apps that do offer one (Camo and friends) ship a
+companion iOS app and a virtual camera instead of using Continuity Camera.
+
+Unplugging the camera you picked is not an error. Tracking moves to the
+built-in camera within milliseconds and says so, the picker shows the one
+you chose as **(not connected)** with what's running underneath it, and the
+moment that camera is back Pawvis returns to it. Switch to **Automatic** any
+time if you'd rather stop waiting for it.
 
 ### Permissions
 
