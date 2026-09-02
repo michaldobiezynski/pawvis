@@ -31,6 +31,12 @@ final class FrameThrottleBox: @unchecked Sendable {
     /// every frame — a 5 fps preview would record 5 fps templates.
     private var training = false
     private var lowPower = false
+    /// Captured frames since launch, stamped at the tap alongside the stall
+    /// clock. The watchdog uses it as *positive* evidence that a camera is
+    /// delivering: "not stalled" is also true inside a warm-up grace, when
+    /// nothing has arrived yet, so clearing a failure on that alone would
+    /// flap. A count that has advanced cannot be anything but new frames.
+    private var frameCount: UInt64 = 0
 
     /// Called on the camera queue for every captured frame. Stamps the stall
     /// clock first — a frame this verdict skips still proves the camera is
@@ -38,10 +44,16 @@ final class FrameThrottleBox: @unchecked Sendable {
     func shouldRunInference(at time: TimeInterval) -> Bool {
         lock.withLock {
             stall.noteFrame(at: time)
+            frameCount &+= 1
             return throttle.shouldRunInference(at: time,
                                                exempt: interacting || training,
                                                lowPower: lowPower)
         }
+    }
+
+    /// Captured frames so far, read on the main actor by the watchdog.
+    var capturedFrames: UInt64 {
+        lock.withLock { frameCount }
     }
 
     /// Restart the no-frames countdown with a warm-up grace. Called on the

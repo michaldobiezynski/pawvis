@@ -34,6 +34,18 @@ final class PawvisController: ObservableObject {
     /// toggle stays on — except the camera keeps running: its frames carry
     /// the face that will reopen the gate.
     @Published private(set) var attentionPaused = false
+    /// True when the camera is delivering frames but they carry no image (a
+    /// near-black picture) — most often an iPhone Continuity Camera whose
+    /// rear lens faces the desk, or a covered or shuttered webcam. The menu
+    /// and the status pill say so, because "no hands" and "facing away" are
+    /// both true and both useless when the real problem is that the camera
+    /// sees nothing.
+    @Published private(set) var cameraSignalDark = false
+    /// The camera the session is configured onto, by name, or nil while
+    /// there is none. The pickers show it when the picked camera is away,
+    /// so "iPhone Camera (not connected)" can be followed by the camera
+    /// that is actually carrying tracking meanwhile.
+    @Published private(set) var activeCameraName: String?
 
     private let camera = CameraManager()
     private let tracking = HandTrackingService()
@@ -44,6 +56,9 @@ final class PawvisController: ObservableObject {
     /// The idle frame-skip policy's thread-safe face, consulted at the
     /// camera tap (see `FrameThrottleBox`).
     private let throttle = FrameThrottleBox()
+    /// The black-feed policy's thread-safe face, consulted at the camera tap
+    /// (see `CameraSignalBox`).
+    private let signal = CameraSignalBox()
     private let engine: GestureEngine
     private let mouse: MouseController
     private let overlay = OverlayController()
@@ -71,6 +86,20 @@ final class PawvisController: ObservableObject {
 
         camera.onFrame = { [weak self] sampleBuffer in
             guard let self else { return }
+            // Black-feed check first, before the throttle and gate can skip
+            // this frame: a camera pointed at nothing (an iPhone rear lens
+            // facing the desk, a covered webcam) has no hands and no face,
+            // so both of those would drop the frame — yet a black feed is
+            // exactly the state the user needs named. The box samples on its
+            // own sparse cadence, so running it every frame is cheap.
+            // Only a verdict *change* is worth a main hop; the handler then
+            // reads the box's current state rather than a value that may be
+            // stale by the time it runs (a reset can land in between).
+            if self.signal.assess(sampleBuffer, at: CACurrentMediaTime())?.changed == true {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self.reconcileCameraSignal() }
+                }
+            }
             // Idle throttle, decided here at the tap: with no hands around
             // for a while, most frames skip Vision entirely — the cheap,
             // glitch-free lever (the AVCaptureSession itself is never
@@ -127,13 +156,57 @@ final class PawvisController: ObservableObject {
         // warm-up leash a fresh session gets.
         camera.onWillReconfigure = { [weak self] in
             MainActor.assumeIsolated {
-                self?.armStallClock(grace: Self.startupGraceSeconds)
+                guard let self else { return }
+                self.armStallClock(grace: Self.startupGraceSeconds)
+                // A different camera is warming up: forget the old feed's
+                // brightness history so the new one is judged from scratch,
+                // and drop any stale dark warning until it has looked.
+                self.signal.reset()
+                self.cameraSignalDark = false
+                // Let go of anything held, here rather than in any one
+                // caller, because *every* swap arrives through this hook: the
+                // user switching cameras in the picker, the disconnect
+                // fallback, a chosen camera returning. A swap is a
+                // coordinate-space discontinuity exactly like the attention
+                // gate closing — the new camera's field of view maps the same
+                // hand to a different point, so a press carried across it
+                // finishes somewhere the user never chose. Worse, if the new
+                // camera's first frame lands inside the tracking-loss grace
+                // and has a hand in it, the engine *inherits* the press
+                // instead of releasing it, and a drag lands wherever the new
+                // mapping put the cursor.
+                guard self.trackingActive, !self.trainingActive else { return }
+                self.releaseEverything()
+                self.engine.reset()
+                self.handsDetected = 0
+                self.grabbing = false
             }
         }
         camera.onFailure = { [weak self] reason in
             MainActor.assumeIsolated {
                 self?.enterCameraFailure(reason)
             }
+        }
+        // The picked camera left and another took over. Capture never
+        // stopped, so this is a notice: no failure state, no overlay
+        // teardown, nothing released. The pick is kept and re-adopted when
+        // the camera returns, which is what the pill says.
+        camera.onDeviceFallback = { [weak self] gone, now in
+            MainActor.assumeIsolated {
+                guard let self, self.trackingActive else { return }
+                Log.camera.info("Camera fell back: \(gone, privacy: .public) → \(now, privacy: .public)")
+                // Anything held was already released by `onWillReconfigure`,
+                // which the disconnect posts to the main queue before this
+                // (same queue, so it runs first). The old failure path
+                // released as a side effect of entering the failure state;
+                // that guarantee now lives with the swap itself.
+                self.gestureNotice = (
+                    text: "🐾 \(gone) disconnected — using \(now)",
+                    until: CACurrentMediaTime() + Self.gestureNoticeSeconds)
+            }
+        }
+        camera.onDeviceChanged = { [weak self] name in
+            MainActor.assumeIsolated { self?.activeCameraName = name }
         }
         camera.onInterruption = { [weak self] reason in
             MainActor.assumeIsolated {
@@ -269,6 +342,8 @@ final class PawvisController: ObservableObject {
         throttle.reset()
         attention.reset()
         attentionPaused = false
+        signal.reset()
+        cameraSignalDark = false
         refreshProjector()
         overlay.show()
         camera.start(deviceID: settingsStore.settings.general.cameraDeviceID)
@@ -330,6 +405,8 @@ final class PawvisController: ObservableObject {
         releaseEverything()
         overlay.hide()
         cameraFailure = nil // leaving tracking on purpose: nothing is failing
+        signal.reset()
+        cameraSignalDark = false
         permissionPollTimer?.invalidate()
         permissionPollTimer = nil
         watchdogTimer?.invalidate()
@@ -394,6 +471,10 @@ final class PawvisController: ObservableObject {
         // just typed the password is at the machine, facing it.
         attention.reset()
         attentionPaused = false
+        // The camera is stopped now, so any "shows no image" verdict is
+        // stale: clear it rather than warn about a feed that isn't running.
+        signal.reset()
+        cameraSignalDark = false
         Log.app.info("Tracking paused: screen locked")
     }
 
@@ -408,6 +489,8 @@ final class PawvisController: ObservableObject {
         engine.reset()
         throttle.reset()
         attention.reset()
+        signal.reset()
+        cameraSignalDark = false
         overlay.show()
         // Arm the stall clock HERE, not only from `onRunningChanged`: that
         // callback hops the camera queue and a slow `startRunning`, and the
@@ -452,6 +535,27 @@ final class PawvisController: ObservableObject {
             overlay.hide()
             Log.app.info("Control paused: facing away from the screen")
         }
+    }
+
+    /// The black-feed verdict crossed over, reported from the camera tap.
+    /// Nothing to release or reset — a dark feed produces no hands and no
+    /// face, so control is already parked by the ordinary paths; this only
+    /// publishes the reason so the menu and pill can say "the camera sees
+    /// nothing" instead of the true-but-useless "no hands" / "facing away".
+    ///
+    /// The verdict is read from the box *now*, not taken from the parameter:
+    /// this hop is async from the camera queue, so a device switch or lock
+    /// can run `signal.reset()` on the main actor between the tap computing
+    /// `dark` and this handler running. Trusting the stale parameter would
+    /// then republish `true` over the reset and pin the warning on forever
+    /// (the freshly reset box never emits another change). Reading `isDark`
+    /// makes a late notification converge to the truth instead.
+    private func reconcileCameraSignal() {
+        guard trackingActive else { return }
+        let dark = signal.isDark
+        guard cameraSignalDark != dark else { return }
+        cameraSignalDark = dark
+        Log.camera.info("Camera feed \(dark ? "went dark (no image)" : "has an image again", privacy: .public)")
     }
 
     // MARK: - Gesture training
@@ -592,6 +696,21 @@ final class PawvisController: ObservableObject {
         guard trackingActive, !trainingActive, !asleep, !pausedForLock else { return }
         let now = CACurrentMediaTime()
         if let failure = cameraFailure {
+            // Frames are arriving again: the failure is over. This lives in
+            // the watchdog, not in `processFrame`, because processed frames
+            // are the wrong evidence — the idle throttle and the attention
+            // gate both drop frames before they are processed, so a camera
+            // that recovered while the user happened to be looking away kept
+            // showing "camera disconnected" until they looked back (measured:
+            // 16 s after an unplug that had already fallen back in 6 ms).
+            // Captured frames are what "the camera is delivering" means, and
+            // a count that has advanced past the mark is the only proof of it
+            // that a warm-up grace cannot fake.
+            if let mark = failureFrameMark,
+               throttle.capturedFrames >= mark &+ Self.framesProvingRecovery {
+                clearCameraFailure()
+                return
+            }
             // Keep the pill's copy of the reason alive. StatusPillPolicy
             // still times it out and honors the ✕, exactly like the
             // Accessibility warning; the menu line is the copy that stays.
@@ -613,10 +732,23 @@ final class PawvisController: ObservableObject {
             engine.reset()
             handsDetected = 0
             grabbing = false
+            // Remember how many frames had been captured when the failure
+            // began: the watchdog clears it once that count has moved, which
+            // is the only unambiguous proof that a camera is delivering
+            // again. See `watchdogTick`.
+            failureFrameMark = throttle.capturedFrames
         }
         cameraFailure = reason
         overlay.parkForFailure(reason, now: CACurrentMediaTime())
     }
+
+    /// Captured-frame count when the current failure began, or nil while
+    /// there is no failure.
+    private var failureFrameMark: UInt64?
+    /// Frames that must arrive past the mark before a failure is called
+    /// over. More than one, so a straggler already in flight when capture
+    /// died cannot clear a genuine failure by itself.
+    private static let framesProvingRecovery: UInt64 = 3
 
     /// Frames are back (or the interruption ended): un-park and say so.
     /// Rendering resumes with the next frame; the engine restarts clean.
@@ -624,6 +756,7 @@ final class PawvisController: ObservableObject {
         armStallClock(grace: Self.startupGraceSeconds)
         guard cameraFailure != nil, trackingActive else { return }
         cameraFailure = nil
+        failureFrameMark = nil
         engine.reset()
         overlay.endFailure()
         gestureNotice = (text: "🐾 Camera is back",

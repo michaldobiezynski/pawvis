@@ -51,6 +51,11 @@ Extras:
   recorded clip and print every pause/resume transition (per-sample head
   yaw/pitch with `--verbose`). Same reasoning as `--gesture-eval`: what
   Vision reports for a real head mid-turn is a question for the machine.
+- `Pawvis --cameras [uniqueID]` — list every camera macOS offers the binary,
+  typed the way `CameraSelectionPolicy` sees them, and where Automatic (or
+  the given pick) lands. Run it from `build/Pawvis.app/Contents/MacOS/Pawvis`:
+  the Continuity Camera typing needs the bundle's Info.plist (see
+  [Cameras](#cameras)).
 - `Pawvis --action-eval <kind> [argument…]` — perform one gesture action
   through the real `GestureActionRunner` and print the pill outcome.
   "Does desktopRight actually switch the desktop on this machine" is a
@@ -195,8 +200,8 @@ to shutdown, so the app owns two rest states (`PawvisController`):
   Power Mode shortens the no-hands delay to 3 s and sparsens the probe to
   one frame in fifteen (~2 fps). The thresholds are constants, chosen
   rather than measured; make them settings only if someone actually asks.
-- **Look-to-control is a third, opt-in rest state** (`AttentionGate`, pure
-  PawvisCore, hosted in `AttentionGateBox` at the camera tap). With
+- **Look-to-control is a third rest state, on by default** (`AttentionGate`,
+  pure PawvisCore, hosted in `AttentionGateBox` at the camera tap). With
   Tracking → "Only control while you face the screen" on, Vision's face
   detector (rectangles revision 3 — the cheap one, sampled one frame in
   three) watches head yaw/pitch; a sustained look away closes the gate and
@@ -209,7 +214,14 @@ to shutdown, so the app owns two rest states (`PawvisController`):
   cursor), and a Vision *error* holds the last verdict instead — "couldn't
   look" must not read as "looked away". Voice control is deliberately
   outside the gate: "Pawvis stop" must work precisely when you're not
-  looking.
+  looking. It shipped off by default in v0.27.0 and became the default two
+  days later; `SettingsStore` migration v9
+  (`PawvisMigration.attentionOnByDefault`) carries existing installs over,
+  because every settings file written by v0.27.x has the old `false` in it
+  and a bool cannot say whether that `false` was chosen or inherited. The
+  welcome tour's camera card is where a new user is told about it, next to
+  the frames-are-discarded promise — the head is the second thing the camera
+  is watching, so it is disclosed where the camera is asked for.
 - **Skipped frames never reach the gesture engine**, whose only clock is
   the timestamps of the frames it is given — a delivery gap reads as a slow
   camera, which the tracking-loss grace already tolerates. A held button,
@@ -227,6 +239,167 @@ to shutdown, so the app owns two rest states (`PawvisController`):
   swaps) arms the clock *synchronously* with the warm-up grace; the
   asynchronous `onRunningChanged` re-arm is the second belt, because a
   watchdog tick can beat it after an unlock.
+
+## Cameras
+
+Which camera feeds the session is a pure rule, `CameraSelectionPolicy`
+(PawvisCore, unit-tested); `CameraManager` only enumerates devices and
+performs the verdict, and every configure path (start, settings switch,
+disconnect fallback, a device appearing) goes through `chosenDevice`, so
+exactly one place decides. The rule: an explicit pick
+(`general.cameraDeviceID`) wins while present; Automatic is the built-in
+camera; a pick that walked away is Automatic until it returns; no built-in
+camera (a Mac mini) means the first camera at all.
+
+**Pawvis never switches cameras on its own** (decided 2026-08-22). macOS
+offers an iPhone as a Continuity Camera whenever it is nearby and signed in,
+mounted or not, and an app can follow `AVCaptureDevice.systemPreferredCamera`
+to a *mounted* phone the way FaceTime does; Pawvis deliberately does not. A
+hand tracker that changes its own viewpoint unasked goes blind, or keeps
+pointing from a camera the user is not in front of. The phone is a picker
+entry, one pick away, nothing more: Settings → General's caption, the
+README's *Cameras* section, the site's iPhone FAQ and the welcome tour's
+camera card all say so, and go stale together. Measured facts behind the
+implementation (2026-08-22, macOS 26.5, two iPhones in range):
+
+- **`NSCameraUseContinuityCameraDeviceType` is what makes an iPhone an
+  iPhone.** Without that Info.plist key macOS still lists the phone, but
+  typed `.external` here (the AVFoundation header says
+  `.builtInWideAngleCamera` for macOS 14, which would have made "prefer the
+  built-in camera" a coin toss between the Mac and the phone). With the key
+  it is `.continuityCamera`. The key lives in `scripts/make_app.sh`'s plist,
+  so it is **bundle-only**: a bare `swift run` binary sees the phone as
+  `.other`. Measure Continuity behavior from `build/Pawvis.app`, never from
+  the binary.
+- **Presence is not mounting.** Both phones sat in the discovery list, and
+  in the picker, while neither was positioned as a webcam. Picking one
+  starts streaming from it on the spot (the phone shows its Continuity
+  Camera screen); nothing about being listed requires a mount.
+- **If anyone ever reintroduces auto-follow**, the facts are: the signal is
+  `systemPreferredCamera`, a class property, key-value observed on the
+  `AVCaptureDevice` class object (reached through `AnyObject`, since Swift
+  exposes no `addObserver` on a metatype; use a heap-allocated context,
+  because `&storedProperty` is only valid for the call it is passed to).
+  It is **nil at launch and arrives by KVO** ("FaceTime HD Camera" within
+  2 s, camera grant or not), so it can never be read once and trusted. And
+  `userPreferredCamera` would make it keep returning the last manual pick
+  until reboot, so "Automatic" after a manual pick would silently stay on
+  it. All of this was measured working, then removed on purpose.
+- **Every device-appeared signal funnels through `reconcileDevice`**,
+  which re-runs the rule and reconfigures only if the verdict differs from
+  the input actually feeding the session. That is what keeps a virtual
+  camera registering itself, or a phone coming into range, from touching a
+  running session. While the session is stopped (the lock screen, tracking
+  off) it drops the stale input instead, so the next `start` lands on the
+  new verdict: a pick that reconnected behind the lock screen is the camera
+  after unlock.
+- **A binary launched from a terminal is judged by the terminal's camera
+  grant**, not the app's (`authorizationStatus` read "not determined" from
+  Terminal and "granted" via `open --stdout F --stderr F -W -n
+  build/Pawvis.app --args …`). Anything that needs to capture from a CLI
+  flag must be launched the second way.
+- **Desk View is excluded from discovery** on purpose; it points at the
+  desk.
+
+### Losing the picked camera is a hand-over, not a failure
+
+Unplug the camera the user picked and `handleDeviceDisconnected`
+reconfigures onto the automatic choice in milliseconds — that part always
+worked. What was wrong was everything the user could see, and all three
+faults are worth keeping fixed:
+
+- **A successful hand-over reported itself through `onFailure`.** The red
+  failure state exists for "frames may never arrive again"; using it for a
+  swap that already succeeded released held buttons, tore the overlay down
+  and told the user the app broke at the exact moment it recovered.
+  `onDeviceFallback(gone:now:)` is the channel for a hand-over, and it only
+  posts a pill notice. `onFailure` is left for the genuine case: no camera
+  left at all.
+- **The failure could only be cleared by a *processed* frame.**
+  `clearCameraFailure` ran from `processFrame`, which sits behind the idle
+  throttle and the attention gate — so a camera that recovered while the
+  user happened to be looking away kept showing "disconnected" until they
+  looked back (measured: 16 s after an unplug that had fallen back in 6 ms).
+  The watchdog now clears it on *captured* frames, the same evidence it uses
+  to convict. It demands `framesProvingRecovery` frames past a mark taken
+  when the failure began: "not stalled" is also true inside a warm-up grace
+  when nothing has arrived yet, so clearing on that alone would flap, and a
+  single straggler already in flight when capture died must not count.
+- **The picker showed a raw uniqueID** ("Unavailable — 78A14D30-…") in the
+  menu, and in Settings the selection matched no tag at all and rendered
+  blank. Both read as a broken setting rather than an unplugged camera.
+  `general.cameraDeviceName` now remembers the pick's display name purely
+  for copy (never for selection — ids do that), and
+  `CameraSelectionPolicy.presentation` decides what both pickers show, so
+  they cannot disagree. An absent pick reads "iPhone Camera (not
+  connected)" with the camera actually running named underneath it.
+
+The pick is deliberately **kept**, not reset to Automatic, so plugging the
+camera back in re-adopts it (`handleDeviceConnected` → `reconcileDevice`).
+That is only defensible because the UI now says plainly what is running
+meanwhile; without that, keeping the pick is what made the app look stuck.
+
+### The iPhone is the rear camera, and a black feed is a real state
+
+Continuity Camera streams the iPhone's **rear** camera (plus a Desk View
+crop); Apple exposes no front/selfie device to a Mac app, and the iPhone's
+`AVCaptureDevice.position` reads `.unspecified` (0), so there is nothing to
+build a "Front / Rear" picker from and the copy says so instead of offering
+a control that can't work. This was asked twice (2026-08-22 and again on
+2026-08-23); the answer is a hard no, and it is settled — do not re-litigate
+it without new evidence from Apple. What was checked, in the macOS 26 SDK
+headers themselves rather than from memory:
+
+- `AVCaptureDevice.h`: `@property(nonatomic, readonly) AVCaptureDevicePosition position;`
+  — read-only, no exceptions.
+- No `setPosition`, `activeLens`, `selectedLens` or `switchCamera` symbol
+  exists anywhere in AVFoundation's headers.
+- `AVCaptureDeviceInput.portsWithMediaType:sourceDeviceType:sourceDevicePosition:`
+  — the iOS route to a virtual device's constituent lenses — is documented
+  around `AVCaptureMultiCamSession` and buys nothing here: the Continuity
+  device is not a multi-lens virtual device (its formats differ only by
+  resolution).
+- Apple's own "Supporting Continuity Camera in your macOS app" says it uses
+  the "rear-facing, wide-angle camera", and the iPhone's Continuity overlay
+  offers Pause/Disconnect only, with no lens flip.
+- Apps that *do* offer a front lens (Camo, EpocCam, iVCam) ship a companion
+  iOS app plus a CoreMediaIO camera extension; they do not use Continuity
+  Camera at all. That is the only route, and it is a separate product.
+
+The failure that session opened with — "iPhone connected, no cursor, no
+tracking, as if no signal" — was **a black feed, not a capture bug**.
+Measured with a throwaway `--camera-probe` flag (removed after; recreate it
+if needed — it configured a camera exactly as `CameraManager` does, counted
+frames, ran the face and hand requests at every `CGImagePropertyOrientation`,
+and saved a snapshot):
+
+- **Frames arrived fine** (48–209 over the window, 1920×1080, the app's own
+  `420f`), so the stall watchdog stayed quiet. But **mean luminance was ~1.8
+  / 255** — the rear lens was facing the desk. With the phone aimed at the
+  user, luminance was ~105 and Vision found a face and a hand **at
+  orientation `.up`** (and every other orientation), which is the one the
+  app uses: there is no rotation or mirroring bug, and the feed is upright
+  and unmirrored as delivered.
+- A black feed has **no hands** (engine: "no hands in view") and **no face**
+  (attention gate: "facing away") — both true, both hiding the cause. So
+  `CameraSignalMonitor` (pure PawvisCore, unit-tested) names it: mean
+  luminance below `darkLuma` (8) for `darkDelay` (2 s) is a dark feed,
+  recovery is instant on the first real frame, an unreadable frame holds the
+  verdict, and a feed dark from the first sample still trips (timed from that
+  sample — the face-down case). `CameraSignalBox` is its camera-queue face
+  (mirrors `FrameThrottleBox`), sampling luminance one frame in five off a
+  coarse grid of the luma plane. It runs at the tap **before** the idle
+  throttle and the attention gate, because a black feed is exactly the frame
+  both of those would skip. The controller publishes `cameraSignalDark`; the
+  menu warning and status line lead with it (above "facing away" and "no
+  hands"), pointing at the rear lens. Verified end to end: the real app on a
+  face-down iPhone logged `Camera feed went dark (no image)` ~2.7 s in
+  (the 2 s delay plus the sample cadence).
+- The thresholds are constants, chosen not measured; make them settings only
+  if someone asks. The dark state is menu-only on purpose: when the feed is
+  dark the attention gate has already parked control and hidden the overlay,
+  so there is no pill to write to, and the menu is where the camera is
+  picked and its status read.
 
 ## Gesture engine
 

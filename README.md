@@ -1,5 +1,7 @@
 <h1 align="center">Pawvis</h1>
 
+<p align="center"><a href="https://pawvis.app">pawvis.app</a></p>
+
 <p align="center">
   <img src="icon.png" alt="Pawvis" width="200">
 </p>
@@ -258,6 +260,34 @@ announces itself in a macOS notification, once per version, with an **Install…
 button that opens **Settings → About** where the release notes and the one-click
 install live. **Check Now** on that page runs the check on demand.
 
+### Cameras
+
+Any camera macOS can see works: the one built into your Mac, a USB webcam,
+or your iPhone as a [Continuity Camera](https://support.apple.com/en-us/102546).
+**Automatic** (the default) is the built-in camera, and Pawvis never
+switches cameras on its own. When macOS offers your iPhone (nearby, signed
+in to the same Apple Account, over a cable or not) it simply appears in the
+camera picker in **Settings → General** and in the menu bar, next to any
+webcam, and using it is one pick. A picked camera stays yours: if it unplugs
+or walks away, tracking rides the built-in camera until it returns, then
+goes back to it.
+
+One thing to know about the iPhone: Continuity Camera uses its **rear**
+camera (the lenses on the back), not the selfie camera, so point the back of
+the phone at you, screen facing away. If Pawvis says the camera shows no
+image, the lens is looking at nothing (a phone lying face-down, or a covered
+webcam); aim it at you and tracking resumes on its own. Apple gives Mac apps
+no way to reach the iPhone's front camera, so there is no front/rear choice
+to offer: `AVCaptureDevice.position` is read-only and AVFoundation has no
+lens selector, and apps that do offer one (Camo and friends) ship a
+companion iOS app and a virtual camera instead of using Continuity Camera.
+
+Unplugging the camera you picked is not an error. Tracking moves to the
+built-in camera within milliseconds and says so, the picker shows the one
+you chose as **(not connected)** with what's running underneath it, and the
+moment that camera is back Pawvis returns to it. Switch to **Automatic** any
+time if you'd rather stop waiting for it.
+
 ### Permissions
 
 On first run Pawvis asks for:
@@ -321,8 +351,9 @@ Sources/
     VoiceControl/      wake-word + command parser · spoken URLs & key chords
     Update/            semantic versions · check / offer / notify policy
     Config/            settings tree (field-tolerant decoding)
+    Camera/            camera selection policy · idle throttle · stall clock · attention gate
   Pawvis/              the menu bar app
-    Camera/            AVCaptureSession · Vision hand pose
+    Camera/            AVCaptureSession · Continuity Camera hand-over · Vision hand pose
     Control/           CGEvent mouse + keyboard synthesis
     Overlay/           click-through claw cursor and indicators
     VoiceControl/      on-device speech engine · command executor ·

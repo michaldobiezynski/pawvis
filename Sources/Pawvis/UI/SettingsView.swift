@@ -105,13 +105,14 @@ struct SettingsView: View {
     @ObservedObject var store: SettingsStore
     @ObservedObject var updater: UpdateChecker
     @ObservedObject var loginItem: LoginItemController
+    @ObservedObject var controller: PawvisController
     /// Lets the update notification (and the menu bar's update row) land the
     /// user on About rather than wherever they last were.
     @ObservedObject private var router = SettingsRouter.shared
 
     var body: some View {
         TabView(selection: $router.tab) {
-            GeneralSettingsTab(store: store, loginItem: loginItem)
+            GeneralSettingsTab(store: store, loginItem: loginItem, controller: controller)
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
             TrackingSettingsTab(store: store)
@@ -156,7 +157,52 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @ObservedObject var store: SettingsStore
     @ObservedObject var loginItem: LoginItemController
+    @ObservedObject var controller: PawvisController
     private var cameras: [(id: String, name: String)] { CameraManager.availableCameras() }
+
+    /// How the picker should render the stored pick right now.
+    private var cameraPresentation: CameraSelectionPolicy.PickPresentation {
+        CameraSelectionPolicy.presentation(
+            pick: store.settings.general.cameraDeviceID,
+            pickName: store.settings.general.cameraDeviceName,
+            availableIDs: cameras.map(\.id))
+    }
+
+    /// Record the pick *and* its display name, so an absent camera can be
+    /// named later instead of shown as a raw uniqueID. Never nulls a good
+    /// name: see the twin in `MenuContentView`.
+    private func pickCamera(_ id: String) {
+        guard !id.isEmpty else {
+            store.settings.general.cameraDeviceID = nil
+            store.settings.general.cameraDeviceName = nil
+            return
+        }
+        store.settings.general.cameraDeviceID = id
+        if let name = cameras.first(where: { $0.id == id })?.name {
+            store.settings.general.cameraDeviceName = name
+        }
+    }
+
+    /// The rule, then the live state. The second half matters most when a
+    /// picked camera is unplugged: without it the picker looks stuck on a
+    /// device that is gone, when in fact tracking carried on somewhere else.
+    private var cameraCaption: String {
+        var caption = "Automatic uses your Mac's built-in camera. Your iPhone appears here as a Continuity Camera whenever macOS offers it (nearby, same Apple Account, plugged in or not); pick it to use it. Continuity Camera streams the iPhone's rear lenses, so point the back of the phone at you: macOS gives Mac apps no way to use the iPhone's front camera, so there is no front/rear choice to offer. Pawvis never switches cameras on its own."
+        switch cameraPresentation {
+        case .awaitingReturn(_, let name):
+            let missing = name ?? "The selected camera"
+            if controller.trackingActive, let running = controller.activeCameraName {
+                caption += " \(missing) isn't connected right now, so tracking is using \(running); the moment it's back, Pawvis returns to it."
+            } else {
+                caption += " \(missing) isn't connected right now. Tracking uses the built-in camera until it's back."
+            }
+        case .connected, .automatic:
+            if controller.trackingActive, let running = controller.activeCameraName {
+                caption += " Using now: \(running)."
+            }
+        }
+        return caption
+    }
 
     var body: some View {
         SettingsPage {
@@ -180,13 +226,20 @@ private struct GeneralSettingsTab: View {
 
             Divider()
 
-            SettingRow(title: "Camera") {
+            SettingRow(title: "Camera", caption: cameraCaption) {
                 Picker("", selection: Binding(
                     get: { store.settings.general.cameraDeviceID ?? "" },
-                    set: { store.settings.general.cameraDeviceID = $0.isEmpty ? nil : $0 })) {
+                    set: { pickCamera($0) })) {
                     Text("Automatic").tag("")
                     ForEach(cameras, id: \.id) { camera in
                         Text(camera.name).tag(camera.id)
+                    }
+                    // Without an entry for a pick that is no longer present,
+                    // the selection matches no tag and the picker renders
+                    // blank — which reads as a broken setting rather than as
+                    // a camera that is merely unplugged.
+                    if case .awaitingReturn(let id, let name) = cameraPresentation {
+                        Text("\(name ?? "Selected camera") (not connected)").tag(id)
                     }
                 }
             }

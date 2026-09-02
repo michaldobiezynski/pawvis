@@ -100,6 +100,8 @@
         Download for macOS
       </a>
       <a class="btn btn-ghost" href="https://github.com/alexandriax/pawvis">View on GitHub</a>
+      <a class="btn btn-ghost btn-video" href="https://www.youtube.com/watch?v=xDQwwXdeuUs"
+         target="_blank" rel="noopener noreferrer">Demo Video</a>
     </div>
     <p class="meta-line mono" data-reveal>Signed &amp; notarized&nbsp;&nbsp;·&nbsp;&nbsp;macOS 14+&nbsp;&nbsp;·&nbsp;&nbsp;Free &amp; open source (MIT)</p>
 
@@ -126,7 +128,7 @@
         <a class="btn btn-ghost" href="https://www.youtube.com/watch?v=xDQwwXdeuUs"
            target="_blank" rel="noopener noreferrer">
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M5.5 3.5v9l7.5-4.5z"/></svg>
-          Watch the demo film
+          Watch feature demo
         </a>
       </div>
       <figcaption class="visually-hidden">Pawvis moving the cursor by hand, live.</figcaption>
@@ -497,7 +499,12 @@
 
       <details class="faq-item">
         <summary>Does it work in low light, or with an external webcam?</summary>
-        <p>Vision needs a reasonably lit hand to find and track, so a dim room or heavy backlighting makes it flaky, the same as any camera-based tracking. Any camera macOS can see works, built-in, external, or Continuity Camera: pick it in Settings&nbsp;→&nbsp;General.</p>
+        <p>Vision needs a reasonably lit hand to find and track, so a dim room or heavy backlighting makes it flaky, the same as any camera-based tracking. Any camera macOS can see works: the built-in one, a USB webcam, or your iPhone as a Continuity Camera (see below). Pick it in Settings&nbsp;→&nbsp;General or from the menu bar.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Can I use my iPhone as the camera?</summary>
+        <p>Yes. Whenever macOS offers it as a Continuity Camera (nearby, signed in to the same Apple Account, over a cable or not) it appears in the camera picker in Settings&nbsp;→&nbsp;General and in the menu bar; pick it and Pawvis tracks your hand through it. Continuity Camera uses the iPhone's rear lenses, not the selfie camera, so point the back of the phone at you; if Pawvis says the camera shows no image, the lens is looking at nothing. Apple gives Mac apps no way to reach the iPhone's front camera, so there is no front/rear choice to offer. Pawvis never switches cameras on its own: Automatic is your Mac's built-in camera. Unplug the phone and tracking moves to the built-in camera right away and tells you, the picker shows your pick as "not connected", and Pawvis returns to it the moment it is back.</p>
       </details>
 
       <details class="faq-item">

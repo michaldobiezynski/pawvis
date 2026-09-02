@@ -182,10 +182,44 @@ func runSelfTest() -> Int32 {
               seen: true, lessons: PracticeCourse.lessons(for: .default))
           && !PracticePolicy.opensAfterWelcome(seen: false, lessons: []))
 
-    // Look-to-control: off by default; enabled, only a *sustained* look
-    // away closes the gate, a press in flight holds it open, and looking
-    // back reopens it.
-    check("attention.defaultsOff", !PawvisSettings.default.attention.enabled)
+    // Camera selection: an explicit pick wins; Automatic is the built-in
+    // camera and never an iPhone that happens to be around; a pick that
+    // walked away is Automatic until it returns.
+    let builtInCamera = CameraSelectionPolicy.Candidate(id: "mac", kind: .builtIn)
+    let phoneCamera = CameraSelectionPolicy.Candidate(id: "phone", kind: .continuity)
+    let usbCamera = CameraSelectionPolicy.Candidate(id: "usb", kind: .other)
+    check("camera.pickWins", CameraSelectionPolicy.choose(
+        pick: "phone", available: [builtInCamera, phoneCamera, usbCamera]) == "phone")
+    check("camera.automaticIsBuiltIn", CameraSelectionPolicy.choose(
+        pick: nil, available: [usbCamera, phoneCamera, builtInCamera]) == "mac")
+    check("camera.automaticNeverTakesTheIPhone", CameraSelectionPolicy.choose(
+        pick: nil, available: [phoneCamera, builtInCamera]) == "mac")
+    check("camera.noBuiltInMeansFirstCamera", CameraSelectionPolicy.choose(
+        pick: nil, available: [phoneCamera, usbCamera]) == "phone")
+    check("camera.missingPickIsAutomatic", CameraSelectionPolicy.choose(
+        pick: "gone", available: [builtInCamera, phoneCamera]) == "mac")
+
+    // Picker presentation: a pick that is present is connected; one that is
+    // gone is awaited by name, never shown as a raw id or as nothing.
+    check("camera.presentAutomatic", CameraSelectionPolicy.presentation(
+        pick: nil, pickName: nil, availableIDs: ["mac"]) == .automatic)
+    check("camera.presentConnected", CameraSelectionPolicy.presentation(
+        pick: "phone", pickName: "iPhone", availableIDs: ["mac", "phone"])
+        == .connected(id: "phone"))
+    check("camera.presentAwaitsUnpluggedPickByName", CameraSelectionPolicy.presentation(
+        pick: "phone", pickName: "iPhone", availableIDs: ["mac"])
+        == .awaitingReturn(id: "phone", name: "iPhone"))
+
+    // Black-feed monitor: a feed dark from the start trips only after the
+    // delay, and the first real image clears it at once.
+    var signal = CameraSignalMonitor(config: .init(darkLuma: 8, darkDelay: 2.0))
+    check("signal.darkFromStartWaitsForDelay", !signal.sample(luma: 2, at: 0.0) && signal.sample(luma: 2, at: 2.0))
+    check("signal.brightRecoversInstantly", !signal.sample(luma: 90, at: 2.1) && !signal.isDark)
+
+    // Look-to-control: on by default; only a *sustained* look away closes
+    // the gate, a press in flight holds it open, and looking back reopens
+    // it.
+    check("attention.defaultsOn", PawvisSettings.default.attention.enabled)
     var attentionOn = AttentionConfig()
     attentionOn.enabled = true
     var attentionGate = AttentionGate(config: attentionOn.gateConfig())
