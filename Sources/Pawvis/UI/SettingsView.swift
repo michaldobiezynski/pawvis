@@ -409,8 +409,11 @@ private struct MouseSettingsTab: View {
     var body: some View {
         SettingsPage {
             VStack(alignment: .leading, spacing: 5) {
-                Button("Open Gesture Guide") { GuideWindow.show() }
-                CaptionText("Every gesture, illustrated — the mouse set below plus anything you assign in the Gestures tab.")
+                HStack(spacing: 8) {
+                    Button("Open Gesture Guide") { GuideWindow.show() }
+                    Button("Practice the moves") { PracticeWindow.show() }
+                }
+                CaptionText("Every gesture, illustrated — the mouse set below plus anything you assign in the Gestures tab. Practice runs the basics (control, move, click, drag, scroll, right-click) against live targets, with the tracker's view of your hand alongside.")
             }
 
             Divider()
@@ -1020,6 +1023,11 @@ private struct AboutTab: View {
             VStack(alignment: .leading, spacing: 5) {
                 Button("Replay the welcome tour") { WelcomeWindow.show() }
                 CaptionText("The first-run walkthrough: what Pawvis does, the permissions it needs, and the two gestures that carry most of the work. A new install sees it automatically — this is how to find it again.")
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Button("Practice the moves") { PracticeWindow.show() }
+                CaptionText("A two-minute practice round: take control, move, click, drag, scroll and right-click against live targets, with the tracker's live view of your hand telling you what it sees. It opens on its own once, right after the welcome tour — this is how to run it again, and each lesson can be skipped.")
             }
 
             Divider()

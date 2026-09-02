@@ -241,6 +241,16 @@ struct WelcomeView: View {
                     FirstRun.markCompleted()
                     controller.startTracking()
                     dismiss()
+                    // The practice round follows the tour, once per
+                    // install: the tour got the permissions, the round
+                    // teaches the moves. Marked seen as it opens, so a
+                    // closed window counts as a skip and it never nags.
+                    let lessons = PracticeCourse.lessons(
+                        for: controller.settingsStore.settings.gestures)
+                    if PracticePolicy.opensAfterWelcome(seen: PracticeProgress.seen, lessons: lessons) {
+                        PracticeProgress.markSeen()
+                        PracticeWindow.show()
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -249,7 +259,7 @@ struct WelcomeView: View {
                 // Settings. (Not-determined is fine: Start asks in context.)
                 .disabled(camera == .denied)
             }
-            Text("Pawvis lives in the menu bar: click the claw to stop or start tracking, open Settings, or see this tour again.")
+            Text("Next comes a two-minute practice round that teaches the moves against live targets; skip it any time. Pawvis lives in the menu bar: click the claw to stop or start tracking, or open Settings, where this tour and the practice round can be run again.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

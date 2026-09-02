@@ -42,6 +42,12 @@ struct PawvisApp: App {
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+
+        Window("Pawvis Practice", id: PracticeWindow.id) {
+            PracticeView(controller: appDelegate.controller)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
     }
 
 }
@@ -84,6 +90,7 @@ private struct MenuBarIcon: View {
             GuideWindow.opener = openWindow
             TrainerWindow.opener = openWindow
             WelcomeWindow.opener = openWindow
+            PracticeWindow.opener = openWindow
         }
     }
 }
@@ -230,6 +237,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             || ProcessInfo.processInfo.environment["PAWVIS_OPEN_WELCOME"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 WelcomeWindow.show()
+            }
+        }
+
+        // PAWVIS_OPEN_PRACTICE=<intro|takeControl|move|click|drag|scroll|
+        // rightClick|done> (1 = intro) opens the practice round on that
+        // page right after launch — the eyes-on hook for its lessons, like
+        // PAWVIS_OPEN_WELCOME for the tour. A new install gets the round
+        // automatically from the tour's own Start button instead; this hook
+        // never touches the one-shot `Pawvis.practiceSeen` flag.
+        if let page = ProcessInfo.processInfo.environment["PAWVIS_OPEN_PRACTICE"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                PracticeWindow.show(at: PracticeStartPage(argument: page))
             }
         }
 

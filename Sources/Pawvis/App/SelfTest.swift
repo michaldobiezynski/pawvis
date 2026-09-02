@@ -164,6 +164,24 @@ func runSelfTest() -> Int32 {
     check("firstRun.automatedRunsStayHeadless", FirstRunPolicy.verdict(
         completed: false, cameraGranted: false, automated: true) == .proceedNormally)
 
+    // The practice round: every basic motion for the defaults, nothing at
+    // all in gestures-only mode (the mouse is never touched, so there is
+    // nothing to practice), and it opens by itself exactly once — after the
+    // welcome tour, never again once seen.
+    check("practice.defaultsCoverEveryMotion",
+          PracticeCourse.lessons(for: .default)
+          == [.takeControl, .move, .click, .drag, .scroll, .rightClick])
+    var gesturesOnlyConfig = GestureConfig.default
+    gesturesOnlyConfig.controlTrigger = .gesturesOnly
+    check("practice.gesturesOnlyHasNothingToPractice",
+          PracticeCourse.lessons(for: gesturesOnlyConfig).isEmpty)
+    check("practice.opensOnceAfterWelcome",
+          PracticePolicy.opensAfterWelcome(
+              seen: false, lessons: PracticeCourse.lessons(for: .default))
+          && !PracticePolicy.opensAfterWelcome(
+              seen: true, lessons: PracticeCourse.lessons(for: .default))
+          && !PracticePolicy.opensAfterWelcome(seen: false, lessons: []))
+
     // Camera selection: an explicit pick wins; Automatic is the built-in
     // camera and never an iPhone that happens to be around; a pick that
     // walked away is Automatic until it returns.

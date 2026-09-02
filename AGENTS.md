@@ -28,6 +28,17 @@ Extras:
   (flag unset, camera not yet granted) gets it automatically instead of
   auto-starting tracking; `PAWVIS_NO_AUTOSTART=1` suppresses that and leaves
   the flag untouched, so automated runs stay headless.
+- `PAWVIS_OPEN_PRACTICE=<page>` — open the practice round at launch on a
+  page: `intro` (or `1`), a lesson name (`takeControl`, `move`, `click`,
+  `drag`, `scroll`, `rightClick`), or `done`. The eyes-on hook for its
+  lessons; it never touches the one-shot `Pawvis.practiceSeen` flag, which
+  only the welcome tour's Start button sets.
+- `PAWVIS_PRACTICE_DEMO=<none|found|armed|grabbed|dragging|scrolling|right>`
+  — feed the practice window a synthetic hand in that state instead of the
+  camera, so a screenshot machine with no hand in front of it still shows
+  the real coaching states (the hand mirror, the status line). Only the
+  hand feed is faked: the board itself still completes on real mouse
+  events, so drive it with synthetic CGEvents like any other window.
 - `Pawvis --gesture-eval <video…> [--verbose]` — run the real Vision +
   engine pipeline over a webcam recording and print every custom gesture
   that fires (plus per-frame openness/splay/palm diagnostics with
@@ -696,6 +707,37 @@ none of this:
   unreadable action leaves the row unassigned), and an unassigned override
   changes nothing. Only the bundle ID and display name are stored; icons
   are looked up live, so an uninstalled app keeps its readable row.
+
+## The practice round
+
+The interactive half of onboarding (`PracticeView`, `PracticeModel`,
+`PracticeArena`, `PracticeDemos` in the app; `PracticeCourse` in
+PawvisCore): a short game with live targets for each basic motion, opened
+once by the welcome tour's Start button and again from Settings → About or
+Settings → Mouse. Its rules, each deliberate:
+
+- **A lesson completes on the real thing.** The click lesson counts a
+  mouse-down and mouse-up that actually reached the practice window; the
+  drag lesson a token that was really dragged by `mouseDragged` events;
+  the scroll lesson wheel events that really arrived; the move lesson the
+  real pointer (`NSEvent.mouseLocation`, polled) resting on a target. The
+  engine's view of the hand (`PawvisController.practiceFrameTap`) is shown
+  as feedback, never used as the verdict. That is what lets the round
+  diagnose the classic support case, "the cursor moves but nothing
+  clicks": the engine reports the dip, no click arrives, and the hint says
+  to check the Accessibility grant.
+- **It never touches the engine or the mouse**, and it never writes
+  UserDefaults. The one flag (`Pawvis.practiceSeen`, `PracticeProgress`)
+  is set by the welcome tour as it opens the round, so closing the window
+  is a skip and the round never opens unasked twice. The auto-open rule
+  (`PracticePolicy`) and the course composition (`PracticeCourse.lessons`,
+  following the same settings the Gesture Guide follows) are pure and
+  tested.
+- **Targets are fixed, not random** (`PracticeTargets`): the sweep teaches
+  reach in every direction, and a screenshot of a lesson looks the same
+  every time.
+- **Everything is skippable**: each lesson has a Skip, the intro has Skip
+  for now, and closing the window is fine at any point.
 
 ## Gesture art
 
