@@ -464,6 +464,15 @@ final class PawvisController: ObservableObject {
     /// hands and the frame timestamp.
     var trainingFrameTap: (([Hand], TimeInterval) -> Void)?
 
+    /// The practice round's per-frame feed, on the main actor: this frame's
+    /// overlay state (armed, grabbed, scrolling, the closing ring) plus the
+    /// raw camera-space hands for its hand mirror, delivered right after
+    /// the frame's mouse events went out. Read-only by construction: the
+    /// practice window never reaches into the engine or the mouse. Its
+    /// lessons complete on the real mouse events that land in its window,
+    /// and this feed is only the coaching alongside (see `PracticeCourse`).
+    var practiceFrameTap: ((OverlayState, [Hand], TimeInterval) -> Void)?
+
     func beginTraining() {
         guard !trainingActive else { return }
         trainingActive = true
@@ -739,6 +748,8 @@ final class PawvisController: ObservableObject {
             projector: projector,
             accessibilityBlocked: !accessibilityGranted,
             diagnostics: diagnosticsLine(hands: hands, at: time))
+
+        practiceFrameTap?(overlayState, hands, time)
 
         let count = overlayState.hands.count
         if count != handsDetected { handsDetected = count }

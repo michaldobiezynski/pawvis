@@ -164,6 +164,24 @@ func runSelfTest() -> Int32 {
     check("firstRun.automatedRunsStayHeadless", FirstRunPolicy.verdict(
         completed: false, cameraGranted: false, automated: true) == .proceedNormally)
 
+    // The practice round: every basic motion for the defaults, nothing at
+    // all in gestures-only mode (the mouse is never touched, so there is
+    // nothing to practice), and it opens by itself exactly once — after the
+    // welcome tour, never again once seen.
+    check("practice.defaultsCoverEveryMotion",
+          PracticeCourse.lessons(for: .default)
+          == [.takeControl, .move, .click, .drag, .scroll, .rightClick])
+    var gesturesOnlyConfig = GestureConfig.default
+    gesturesOnlyConfig.controlTrigger = .gesturesOnly
+    check("practice.gesturesOnlyHasNothingToPractice",
+          PracticeCourse.lessons(for: gesturesOnlyConfig).isEmpty)
+    check("practice.opensOnceAfterWelcome",
+          PracticePolicy.opensAfterWelcome(
+              seen: false, lessons: PracticeCourse.lessons(for: .default))
+          && !PracticePolicy.opensAfterWelcome(
+              seen: true, lessons: PracticeCourse.lessons(for: .default))
+          && !PracticePolicy.opensAfterWelcome(seen: false, lessons: []))
+
     // Look-to-control: off by default; enabled, only a *sustained* look
     // away closes the gate, a press in flight holds it open, and looking
     // back reopens it.

@@ -152,6 +152,14 @@ The menu bar icon opens a live status panel (hands seen, whether control is
 armed, voice-control state, and a camera picker once more than one camera is
 around) plus a **Gesture Guide** window that walks through every gesture.
 
+There is also a **practice round**: a two-minute game that teaches the basic
+moves against live targets (take control, move, click, drag, scroll,
+right-click), with the tracker's view of your hand beside the board so you can
+see what it sees while you learn. A lesson only counts when the real click,
+drag or scroll reaches the practice window, so it doubles as a check that
+clicks actually land. It opens once after the welcome tour, every lesson is
+skippable, and **Settings → About → Practice the moves** runs it again.
+
 ## Voice control (beta)
 
 Off by default while in beta. Enable it in **Settings → Voice (Beta)**,
@@ -265,6 +273,10 @@ On first run Pawvis asks for:
 - **Notifications** *(optional)*: asked for the first time an update is
   actually waiting, never at launch. Decline it and new versions still show up
   in the menu bar and in Settings → About.
+
+The welcome window asks for the first two in context, then hands off to the
+practice round (skippable) so the first thing you do with Pawvis is learn the
+moves against targets that respond.
 
 Releases are signed with a Developer ID and notarized by Apple, so they open
 normally: no right-click → Open, and the Accessibility permission you grant
