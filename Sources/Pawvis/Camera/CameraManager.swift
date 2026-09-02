@@ -30,6 +30,17 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     /// app claimed the device, …) with a reason, and again with nil when the
     /// interruption ends.
     var onInterruption: ((String?) -> Void)?
+    /// Called on the main queue when the active camera vanished and another
+    /// one took over: the device that left, then the device now feeding the
+    /// session. Deliberately *not* `onFailure` — capture never stopped, so
+    /// reporting a red failure for a hand-over that already succeeded (and
+    /// tearing down the overlay for it) tells the user the app broke when
+    /// it in fact recovered in milliseconds.
+    var onDeviceFallback: ((String, String) -> Void)?
+    /// Called on the main queue with the name of the camera the session is
+    /// configured onto, or nil when there is none. Lets the UI say which
+    /// camera is actually running while a picked one is away.
+    var onDeviceChanged: ((String?) -> Void)?
 
     private(set) var isRunning = false
     /// The persisted pick (`general.cameraDeviceID`); nil is Automatic. What
@@ -223,7 +234,10 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
                 .first
             DispatchQueue.main.async {
                 if let fallback {
-                    self.onFailure?("\(goneName) disconnected — switching to \(fallback)")
+                    // Capture is alive on another device: a notice, not a
+                    // failure. The pick is kept, so plugging the camera back
+                    // in re-adopts it (see `handleDeviceConnected`).
+                    self.onDeviceFallback?(goneName, fallback)
                 } else {
                     self.onFailure?("\(goneName) disconnected — no other camera found")
                 }
@@ -291,17 +305,22 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
         guard let device = Self.chosenDevice(forPick: deviceID) else {
             Log.camera.error("No camera device available")
+            DispatchQueue.main.async { self.onDeviceChanged?(nil) }
             return
         }
         do {
             let input = try AVCaptureDeviceInput(device: device)
             guard session.canAddInput(input) else {
                 Log.camera.error("Cannot add camera input")
+                // The session has no input now: reporting nothing here would
+                // leave the UI naming the camera that used to be attached.
+                DispatchQueue.main.async { self.onDeviceChanged?(nil) }
                 return
             }
             session.addInput(input)
         } catch {
             Log.camera.error("Camera input error: \(error.localizedDescription)")
+            DispatchQueue.main.async { self.onDeviceChanged?(nil) }
             return
         }
 
@@ -327,7 +346,9 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
                 session.addOutput(output)
             }
         }
-        Log.camera.info("Camera configured: \(device.localizedName, privacy: .public)")
+        let name = device.localizedName
+        Log.camera.info("Camera configured: \(name, privacy: .public)")
+        DispatchQueue.main.async { self.onDeviceChanged?(name) }
     }
 
     /// Pin capture to a steady 30 fps. Left free-running, auto-exposure

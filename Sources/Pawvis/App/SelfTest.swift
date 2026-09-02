@@ -181,6 +181,17 @@ func runSelfTest() -> Int32 {
     check("camera.missingPickIsAutomatic", CameraSelectionPolicy.choose(
         pick: "gone", available: [builtInCamera, phoneCamera]) == "mac")
 
+    // Picker presentation: a pick that is present is connected; one that is
+    // gone is awaited by name, never shown as a raw id or as nothing.
+    check("camera.presentAutomatic", CameraSelectionPolicy.presentation(
+        pick: nil, pickName: nil, availableIDs: ["mac"]) == .automatic)
+    check("camera.presentConnected", CameraSelectionPolicy.presentation(
+        pick: "phone", pickName: "iPhone", availableIDs: ["mac", "phone"])
+        == .connected(id: "phone"))
+    check("camera.presentAwaitsUnpluggedPickByName", CameraSelectionPolicy.presentation(
+        pick: "phone", pickName: "iPhone", availableIDs: ["mac"])
+        == .awaitingReturn(id: "phone", name: "iPhone"))
+
     // Black-feed monitor: a feed dark from the start trips only after the
     // delay, and the first real image clears it at once.
     var signal = CameraSignalMonitor(config: .init(darkLuma: 8, darkDelay: 2.0))

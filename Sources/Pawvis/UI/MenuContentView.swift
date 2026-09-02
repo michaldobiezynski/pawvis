@@ -163,34 +163,80 @@ struct MenuContentView: View {
     /// exact setting Settings → General's picker uses, so the two views can
     /// never disagree about which camera is selected.
     private var cameraRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "camera.fill")
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            Text("Camera")
-                .font(.callout)
-            Spacer()
-            Picker("", selection: Binding(
-                get: { settingsStore.settings.general.cameraDeviceID ?? "" },
-                set: { settingsStore.settings.general.cameraDeviceID = $0.isEmpty ? nil : $0 })
-            ) {
-                Text("Automatic").tag("")
-                ForEach(cameras, id: \.id) { camera in
-                    Text(camera.name).tag(camera.id)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Image(systemName: "camera.fill")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                Text("Camera")
+                    .font(.callout)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { settingsStore.settings.general.cameraDeviceID ?? "" },
+                    set: { pickCamera($0) })
+                ) {
+                    Text("Automatic").tag("")
+                    ForEach(cameras, id: \.id) { camera in
+                        Text(camera.name).tag(camera.id)
+                    }
+                    // The selected device vanished (unplugged, or a
+                    // Continuity Camera that walked away). Rather than
+                    // quietly relabeling the row "Automatic" while the
+                    // stored ID still points at the missing camera, give
+                    // that ID its own checkmarked entry — the honest state
+                    // of the setting, not a guess. Named, because a raw
+                    // UUID reads as an error rather than as "waiting".
+                    if case .awaitingReturn(let id, let name) = cameraPresentation {
+                        Text("\(name ?? "Selected camera") (not connected)").tag(id)
+                    }
                 }
-                // The selected device vanished (unplugged, or a Continuity
-                // Camera that walked away). Rather than quietly relabeling
-                // the row "Automatic" while the stored ID still points at
-                // the missing camera, give that ID its own checkmarked
-                // entry — the honest state of the setting, not a guess.
-                if let selected = settingsStore.settings.general.cameraDeviceID,
-                   !cameras.contains(where: { $0.id == selected }) {
-                    Text("Unavailable — \(selected)").tag(selected)
-                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(maxWidth: 160)
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(maxWidth: 160)
+            // The picked camera is away, so tracking is riding the automatic
+            // choice. Say which one, or the row reads as broken when it is
+            // in fact working: the fallback happens in milliseconds and the
+            // pick is re-adopted the moment the camera is back.
+            if case .awaitingReturn = cameraPresentation,
+               controller.trackingActive,
+               let running = controller.activeCameraName {
+                Text("Using \(running) until it's back")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 26)
+            }
+        }
+    }
+
+    /// How the picker should render the stored pick right now.
+    private var cameraPresentation: CameraSelectionPolicy.PickPresentation {
+        CameraSelectionPolicy.presentation(
+            pick: settingsStore.settings.general.cameraDeviceID,
+            pickName: settingsStore.settings.general.cameraDeviceName,
+            availableIDs: cameras.map(\.id))
+    }
+
+    /// Record the pick *and* its display name: a uniqueID cannot be shown to
+    /// anyone, so the name is what lets the picker name an absent camera.
+    private func pickCamera(_ id: String) {
+        guard !id.isEmpty else {
+            settingsStore.settings.general.cameraDeviceID = nil
+            settingsStore.settings.general.cameraDeviceName = nil
+            return
+        }
+        settingsStore.settings.general.cameraDeviceID = id
+        // Only overwrite the remembered name when this id is actually in the
+        // current enumeration. Re-selecting the "(not connected)" entry — or
+        // clicking a camera that vanished between the menu drawing and the
+        // click — looks up nothing, and writing that nil would strand the
+        // pick under generic copy forever, which is the exact state the name
+        // is remembered to avoid. The kept name always belongs to this id:
+        // the only selectable ids are Automatic, a present camera, or the
+        // absent pick itself.
+        if let name = cameras.first(where: { $0.id == id })?.name {
+            settingsStore.settings.general.cameraDeviceName = name
         }
     }
 
@@ -215,7 +261,7 @@ struct MenuContentView: View {
         // leads with that; a covered or shuttered webcam does the same.
         if controller.trackingActive, controller.cameraSignalDark, controller.cameraFailure == nil {
             result.append(Warning(
-                text: "The camera isn't showing an image (it looks black). If it's your iPhone, point its rear lens at you — Continuity Camera uses the back camera. Otherwise check for a lens cover, or pick another camera.",
+                text: "The camera isn't showing an image (it looks black). If it's your iPhone, point its rear lens at you — Continuity Camera uses the back camera. Otherwise check for a lens cover or a dark room, or pick another camera.",
                 action: "Camera…",
                 handler: { openSettingsInFront(tab: .general) }))
         }
@@ -318,7 +364,7 @@ struct MenuContentView: View {
         // A black feed outranks both pauses below it: when the camera shows
         // no image there is neither a face to gate on nor a hand to see, so
         // "facing away" and "no hands" would only mislead.
-        if controller.cameraSignalDark { return "Camera shows no image — is it pointed at you?" }
+        if controller.cameraSignalDark { return "Camera shows no image (covered, dark, or aimed away)" }
         // Look-to-control: the camera is fine and hands may be in view, but
         // actions wait for the user to face the screen again.
         if controller.attentionPaused { return "Paused until you face the screen" }

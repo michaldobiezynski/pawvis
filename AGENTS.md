@@ -290,15 +290,70 @@ implementation (2026-08-22, macOS 26.5, two iPhones in range):
 - **Desk View is excluded from discovery** on purpose; it points at the
   desk.
 
+### Losing the picked camera is a hand-over, not a failure
+
+Unplug the camera the user picked and `handleDeviceDisconnected`
+reconfigures onto the automatic choice in milliseconds — that part always
+worked. What was wrong was everything the user could see, and all three
+faults are worth keeping fixed:
+
+- **A successful hand-over reported itself through `onFailure`.** The red
+  failure state exists for "frames may never arrive again"; using it for a
+  swap that already succeeded released held buttons, tore the overlay down
+  and told the user the app broke at the exact moment it recovered.
+  `onDeviceFallback(gone:now:)` is the channel for a hand-over, and it only
+  posts a pill notice. `onFailure` is left for the genuine case: no camera
+  left at all.
+- **The failure could only be cleared by a *processed* frame.**
+  `clearCameraFailure` ran from `processFrame`, which sits behind the idle
+  throttle and the attention gate — so a camera that recovered while the
+  user happened to be looking away kept showing "disconnected" until they
+  looked back (measured: 16 s after an unplug that had fallen back in 6 ms).
+  The watchdog now clears it on *captured* frames, the same evidence it uses
+  to convict. It demands `framesProvingRecovery` frames past a mark taken
+  when the failure began: "not stalled" is also true inside a warm-up grace
+  when nothing has arrived yet, so clearing on that alone would flap, and a
+  single straggler already in flight when capture died must not count.
+- **The picker showed a raw uniqueID** ("Unavailable — 78A14D30-…") in the
+  menu, and in Settings the selection matched no tag at all and rendered
+  blank. Both read as a broken setting rather than an unplugged camera.
+  `general.cameraDeviceName` now remembers the pick's display name purely
+  for copy (never for selection — ids do that), and
+  `CameraSelectionPolicy.presentation` decides what both pickers show, so
+  they cannot disagree. An absent pick reads "iPhone Camera (not
+  connected)" with the camera actually running named underneath it.
+
+The pick is deliberately **kept**, not reset to Automatic, so plugging the
+camera back in re-adopts it (`handleDeviceConnected` → `reconcileDevice`).
+That is only defensible because the UI now says plainly what is running
+meanwhile; without that, keeping the pick is what made the app look stuck.
+
 ### The iPhone is the rear camera, and a black feed is a real state
 
 Continuity Camera streams the iPhone's **rear** camera (plus a Desk View
 crop); Apple exposes no front/selfie device to a Mac app, and the iPhone's
 `AVCaptureDevice.position` reads `.unspecified` (0), so there is nothing to
 build a "Front / Rear" picker from and the copy says so instead of offering
-a control that can't work. This was the ask in the 2026-08-22 session;
-the answer is a hard no from AVFoundation, confirmed by research and by the
-device on hand.
+a control that can't work. This was asked twice (2026-08-22 and again on
+2026-08-23); the answer is a hard no, and it is settled — do not re-litigate
+it without new evidence from Apple. What was checked, in the macOS 26 SDK
+headers themselves rather than from memory:
+
+- `AVCaptureDevice.h`: `@property(nonatomic, readonly) AVCaptureDevicePosition position;`
+  — read-only, no exceptions.
+- No `setPosition`, `activeLens`, `selectedLens` or `switchCamera` symbol
+  exists anywhere in AVFoundation's headers.
+- `AVCaptureDeviceInput.portsWithMediaType:sourceDeviceType:sourceDevicePosition:`
+  — the iOS route to a virtual device's constituent lenses — is documented
+  around `AVCaptureMultiCamSession` and buys nothing here: the Continuity
+  device is not a multi-lens virtual device (its formats differ only by
+  resolution).
+- Apple's own "Supporting Continuity Camera in your macOS app" says it uses
+  the "rear-facing, wide-angle camera", and the iPhone's Continuity overlay
+  offers Pause/Disconnect only, with no lens flip.
+- Apps that *do* offer a front lens (Camo, EpocCam, iVCam) ship a companion
+  iOS app plus a CoreMediaIO camera extension; they do not use Continuity
+  Camera at all. That is the only route, and it is a separate product.
 
 The failure that session opened with — "iPhone connected, no cursor, no
 tracking, as if no signal" — was **a black feed, not a capture bug**.

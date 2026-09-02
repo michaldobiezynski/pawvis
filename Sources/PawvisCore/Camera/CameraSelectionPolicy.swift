@@ -66,4 +66,47 @@ public enum CameraSelectionPolicy {
         guard let pick else { return true }
         return !available.contains(where: { $0.id == pick })
     }
+
+    /// What the camera picker should be showing. Both pickers (Settings →
+    /// General and the menu bar) render from this, so they can never
+    /// disagree about the state of the same setting.
+    ///
+    /// The third case is the one this type exists for. Unplug a picked
+    /// camera and the *session* falls back within milliseconds, but the
+    /// stored pick still names the device that left — so a picker that only
+    /// knows ids either shows a raw UUID or, worse, matches no entry at all
+    /// and renders blank, which reads as "broken" rather than "waiting".
+    /// Naming the absent camera and saying what is running instead is the
+    /// honest report, and it is one click back to Automatic from there.
+    public enum PickPresentation: Equatable, Sendable {
+        /// No pick: the built-in-camera rule is in effect.
+        case automatic
+        /// The picked camera is present and feeding the session.
+        case connected(id: String)
+        /// A pick that is not currently connected. Tracking is riding the
+        /// automatic choice; the pick is re-adopted the moment it returns.
+        case awaitingReturn(id: String, name: String?)
+    }
+
+    /// - Parameters:
+    ///   - pick: the persisted `general.cameraDeviceID`.
+    ///   - pickName: the persisted `general.cameraDeviceName`, the pick's
+    ///     display name as it read when chosen. Absent for picks stored by
+    ///     builds before that field existed.
+    ///   - availableIDs: the uniqueIDs of every camera macOS can see right
+    ///     now. Ids, not `Candidate`s: presence is the only thing this
+    ///     decides on, and asking callers for kinds they would have to
+    ///     invent invites a wrong answer the day it starts mattering.
+    public static func presentation(
+        pick: String?,
+        pickName: String?,
+        availableIDs: [String]
+    ) -> PickPresentation {
+        guard let pick else { return .automatic }
+        if availableIDs.contains(pick) { return .connected(id: pick) }
+        // An empty remembered name is no name: the caller falls back to
+        // generic copy rather than rendering "  (not connected)".
+        let name = (pickName?.isEmpty ?? true) ? nil : pickName
+        return .awaitingReturn(id: pick, name: name)
+    }
 }
