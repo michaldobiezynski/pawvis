@@ -48,6 +48,25 @@ public enum ReachMode: String, Codable, CaseIterable, Sendable {
     case manual
 }
 
+/// How the hand drives the cursor.
+public enum CursorMode: String, Codable, CaseIterable, Sendable {
+    /// The cursor sits where the hand is: the interaction box maps straight
+    /// onto the screen. The original, and the default.
+    case absolute
+    /// Rate control. The spot where the hand arms becomes a centre, and the
+    /// hand's offset from it sets the cursor's velocity, like a thumbstick.
+    /// The hand barely travels, so it can never steer itself out of the
+    /// camera's view; the price is that pointing takes a steer and a stop.
+    case joystick
+
+    public var displayName: String {
+        switch self {
+        case .absolute: return "Direct (the cursor is where your hand is)"
+        case .joystick: return "Joystick (steer the cursor from a centre)"
+        }
+    }
+}
+
 /// Tunables for the (deliberately minimal) gesture engine: the palm moves the
 /// cursor, dipping the index finger clicks/drags, a second finger's dip
 /// right-clicks, and the scroll pose scrolls. Thresholds, smoothing, and
@@ -185,6 +204,29 @@ public struct GestureConfig: Codable, Equatable, Sendable {
     /// this, enough to kill stationary shimmer without feeling sticky.
     public var jitterDeadband: Double = 0.004
 
+    // MARK: Cursor control
+    /// Direct mapping or joystick steering (see `CursorMode`).
+    public var cursorMode: CursorMode = .absolute
+    /// Joystick: how far (screen-normalised) the hand may stray from the
+    /// centre before the cursor moves at all — the stick's slack, so a
+    /// hand held roughly still never creeps.
+    public var joystickDeadZone: Double = 0.04
+    /// Joystick: the offset (screen-normalised) at which the cursor reaches
+    /// top speed; the stick's full travel. Measured in the same mapped
+    /// space as the cursor, so the Reach setting scales it with distance.
+    public var joystickThrow: Double = 0.25
+    /// Joystick: top speed, in screen widths per second, at full throw.
+    public var joystickMaxSpeed: Double = 1.2
+    /// Joystick: response curve exponent between the dead zone and full
+    /// throw. 1 is linear; 2 (the default) keeps small offsets slow for
+    /// fine positioning while the outer half still gets up to speed.
+    public var joystickCurve: Double = 2.0
+    /// The joystick sliders' ranges; the tolerant decoder clamps into them.
+    public static let joystickDeadZoneRange: ClosedRange<Double> = 0...0.15
+    public static let joystickThrowRange: ClosedRange<Double> = 0.10...0.50
+    public static let joystickMaxSpeedRange: ClosedRange<Double> = 0.3...3.0
+    public static let joystickCurveRange: ClosedRange<Double> = 1...3
+
     // MARK: Pointer
     /// The landmark the cursor rides. The palm is the default because it is
     /// the one part of the hand no click gesture moves (see AGENTS.md); the
@@ -231,6 +273,7 @@ public struct GestureConfig: Codable, Equatable, Sendable {
         case pointerSource, smoothing, poseThresholds
         case minHandConfidence, minJointConfidence, trackingLossGrace
         case interactionBox, reachMode, mirrorCamera
+        case cursorMode, joystickDeadZone, joystickThrow, joystickMaxSpeed, joystickCurve
     }
 
     /// Field-tolerant decoding: unknown/missing/mistyped fields (including
@@ -353,5 +396,18 @@ public struct GestureConfig: Codable, Equatable, Sendable {
         if let v = try? c.decodeIfPresent(InteractionBox.self, forKey: .interactionBox) { interactionBox = v }
         if let v = try? c.decodeIfPresent(ReachMode.self, forKey: .reachMode) { reachMode = v }
         if let v = try? c.decodeIfPresent(Bool.self, forKey: .mirrorCamera) { mirrorCamera = v }
+        if let v = try? c.decodeIfPresent(CursorMode.self, forKey: .cursorMode) { cursorMode = v }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: .joystickDeadZone) {
+            joystickDeadZone = v.clamped(to: Self.joystickDeadZoneRange)
+        }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: .joystickThrow) {
+            joystickThrow = v.clamped(to: Self.joystickThrowRange)
+        }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: .joystickMaxSpeed) {
+            joystickMaxSpeed = v.clamped(to: Self.joystickMaxSpeedRange)
+        }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: .joystickCurve) {
+            joystickCurve = v.clamped(to: Self.joystickCurveRange)
+        }
     }
 }

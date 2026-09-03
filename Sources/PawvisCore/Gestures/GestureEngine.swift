@@ -36,6 +36,12 @@ public final class GestureEngine {
 
     public var config: GestureConfig {
         didSet {
+            if config.cursorMode != oldValue.cursorMode {
+                // The old mode's centre means nothing to the new one; the
+                // cursor itself stays put, and the next armed frame either
+                // captures a fresh centre or follows the hand outright.
+                clearJoystick()
+            }
             if config.smoothing != oldValue.smoothing {
                 for i in slots.indices { slots[i].setFilterParams(config.smoothing) }
             }
@@ -298,6 +304,23 @@ public final class GestureEngine {
     private var pointedFrames = 0
 
     private var cursor: Vec2?
+    /// Joystick mode: the pointer position captured when control armed, the
+    /// stick's centre. nil while parked, while no hand holds control, and
+    /// always in `.absolute` mode — so it doubles as "steering right now".
+    private var joystickCentre: Vec2?
+    /// Joystick mode: the steered position, integrated every armed frame.
+    /// `cursor` follows it through the usual jitter deadband.
+    private var joystickPosition: Vec2?
+    private var joystickLastTime: TimeInterval?
+    /// A gap longer than this between steered frames (a dropout inside the
+    /// tracking-loss grace, a stalled camera) integrates nothing: the stick
+    /// was pushing the whole time, but a cursor that leaps to "where it
+    /// would have been" is a cursor that leapt.
+    private static let joystickMaxStep: TimeInterval = 0.15
+    /// Where the joystick starts the very first time it arms — the engine
+    /// has no idea where the real pointer is, and the middle is the one
+    /// place every steer can reach quickly.
+    private static let joystickHome = Vec2(0.5, 0.5)
     /// At most one press exists at a time, whichever button owns it.
     private var press: PressState?
     private var leftButton = ButtonState()
@@ -353,6 +376,8 @@ public final class GestureEngine {
         cursor = nil
         lastHandTime = -.infinity
         smoothedHandScale = nil
+        clearJoystick()
+        joystickPosition = nil
         armed = config.controlTrigger == .anyHand
         armFrames = 0
         disarmFrames = 0
@@ -365,6 +390,11 @@ public final class GestureEngine {
         var events = pendingEvents
         pendingEvents = []
         var overlay = OverlayState()
+        if config.cursorMode == .joystick {
+            // The pad draws whenever the mode is on; a parked stick is a
+            // centred one.
+            overlay.joystick = JoystickOverlay()
+        }
 
         let usableHands = frame.hands.filter { $0.confidence >= config.minHandConfidence }
 
@@ -420,6 +450,12 @@ public final class GestureEngine {
 
         // 3. The control trigger decides whether this hand gets the cursor.
         updateTrigger(features, hand: primary.hand)
+        if !armed {
+            // Disarmed (a fist, or waiting for the trigger): the stick's
+            // centre is gone with it, and the next arm captures a new one
+            // wherever the hand then is — which is the whole point.
+            clearJoystick()
+        }
 
         // 3½. A hand pointed at the screen parks the cursor and blocks the
         // buttons — the pointed wiggle's finger drum reads as index taps
@@ -453,7 +489,27 @@ public final class GestureEngine {
             // the scroll pose holds it parked, in which case palm travel
             // becomes wheel events instead (vertical, plus horizontal when
             // both axes are enabled).
-            let clamped = pointer.clampedToUnit()
+            //
+            // In joystick mode the hand is a stick, not a pointer: its
+            // offset from the centre captured at arming sets the cursor's
+            // velocity, and `clamped` becomes the steered position, so every
+            // branch below (drag, the deadbanded move, and dwell after them)
+            // works on it unchanged. Parked, the stick holds: a scroll or a
+            // wave must not let the cursor creep while the hand is busy.
+            let clamped: Vec2
+            if config.cursorMode == .joystick {
+                let parked = scroll.active || crissCrossParked || grabParked
+                    || (pointedParked && press == nil)
+                clamped = steer(pointer, at: frame.time, parked: parked)
+                if let centre = joystickCentre {
+                    let offset = pointer - centre
+                    overlay.joystick = JoystickOverlay(
+                        offset: offset,
+                        deflection: Self.joystickVelocity(offset: offset, config: config).deflection)
+                }
+            } else {
+                clamped = pointer.clampedToUnit()
+            }
             if scroll.active {
                 if let anchor = scroll.anchor {
                     // Deadband against the anchor, like a drag's — per axis:
@@ -1232,6 +1288,9 @@ public final class GestureEngine {
         var events: [GestureEvent] = []
         var overlay = OverlayState()
         overlay.cursor = cursor
+        if config.cursorMode == .joystick {
+            overlay.joystick = JoystickOverlay()
+        }
 
         // The custom-gesture detector still ticks: a pending one-vs-two-hand
         // decision must resolve even when the hand left the frame right after
@@ -1249,6 +1308,8 @@ public final class GestureEngine {
             // The hand is genuinely gone: the next one sizes the auto box from
             // its own scale rather than inheriting this one's.
             smoothedHandScale = nil
+            // …and steers from its own centre, not the departed hand's.
+            clearJoystick()
             if config.controlTrigger == .openHand {
                 // …and it must show the trigger again to take the cursor back.
                 armed = false
@@ -1266,6 +1327,55 @@ public final class GestureEngine {
         }
         overlay.armed = armed
         return (events, overlay)
+    }
+
+    // MARK: - Joystick
+
+    /// The stick's velocity for a hand `offset` from its centre, in
+    /// screen-normalised units per second, and the deflection (0…1) that
+    /// produced it. Zero inside the dead zone; from there the speed rises
+    /// along `joystickCurve` to `joystickMaxSpeed` at `joystickThrow`, and
+    /// pushing past the throw changes nothing — the stick is at its stop.
+    static func joystickVelocity(offset: Vec2, config: GestureConfig) -> (velocity: Vec2, deflection: Double) {
+        let magnitude = offset.length
+        let deadZone = config.joystickDeadZone
+        guard magnitude > deadZone, magnitude > 1e-9 else { return (.zero, 0) }
+        let travel = max(config.joystickThrow - deadZone, 1e-3)
+        let t = min((magnitude - deadZone) / travel, 1)
+        let deflection = pow(t, config.joystickCurve)
+        return (offset / magnitude * (config.joystickMaxSpeed * deflection), deflection)
+    }
+
+    /// One armed frame of the joystick. The first captures `pointer` as the
+    /// centre and answers the cursor's current position (or the screen's
+    /// middle, the first time ever), so arming never jumps the cursor; the
+    /// rest integrate the stick's velocity over the frame gap. `parked`
+    /// frames (a scroll, a wave, a grab) keep the clock but add nothing.
+    private func steer(_ pointer: Vec2, at time: TimeInterval, parked: Bool) -> Vec2 {
+        guard let centre = joystickCentre else {
+            joystickCentre = pointer
+            joystickLastTime = time
+            let start = cursor ?? Self.joystickHome
+            joystickPosition = start
+            return start
+        }
+        let elapsed = time - (joystickLastTime ?? time)
+        joystickLastTime = time
+        var position = joystickPosition ?? cursor ?? Self.joystickHome
+        if !parked, elapsed > 0, elapsed <= Self.joystickMaxStep {
+            let velocity = Self.joystickVelocity(offset: pointer - centre, config: config).velocity
+            position = (position + velocity * elapsed).clampedToUnit()
+        }
+        joystickPosition = position
+        return position
+    }
+
+    /// Forget the stick's centre (and its clock): the next armed frame in
+    /// joystick mode captures a new one. The steered position survives, so
+    /// control resumes from wherever the cursor was left.
+    private func clearJoystick() {
+        joystickCentre = nil
+        joystickLastTime = nil
     }
 
     // MARK: - Auto reach
@@ -1292,7 +1402,12 @@ public final class GestureEngine {
         // a fixed palm emitted ~0.19 screen-normalized units of phantom
         // scroll before this guard existed). Released, either way, the
         // drift picks back up.
-        guard press == nil, !scroll.active, let scale = smoothedHandScale else { return }
+        // Nor mid-steer: the joystick measures its offset in the box's
+        // space, so a box drifting under a held stick would remap a still
+        // hand to a growing offset and steer the cursor on its own — the
+        // phantom-scroll bug, wearing a different hat. Parked, it re-fits.
+        guard press == nil, !scroll.active, joystickCentre == nil,
+              let scale = smoothedHandScale else { return }
         let target = Self.targetBox(forHandScale: scale)
         func drift(_ edge: Double, toward goal: Double) -> Double {
             edge + (goal - edge) * Self.reachLerp

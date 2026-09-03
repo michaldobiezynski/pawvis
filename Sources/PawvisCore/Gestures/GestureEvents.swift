@@ -46,6 +46,22 @@ public struct OverlayHand: Equatable, Sendable {
     public init() {}
 }
 
+/// The joystick's stick, for the on-screen pad: present only in `.joystick`
+/// cursor mode.
+public struct JoystickOverlay: Equatable, Sendable {
+    /// The hand's offset from the captured centre, screen-normalised and
+    /// unclamped; zero while no centre is held (parked, or no hand).
+    public var offset: Vec2
+    /// How hard the stick is pushing: 0 inside the dead zone, 1 at full
+    /// throw and beyond — the speed fraction, after the response curve.
+    public var deflection: Double
+
+    public init(offset: Vec2 = .zero, deflection: Double = 0) {
+        self.offset = offset
+        self.deflection = deflection
+    }
+}
+
 /// Everything the overlay renderer needs for one frame.
 public struct OverlayState: Equatable, Sendable {
     public var hands: [OverlayHand] = []
@@ -76,6 +92,8 @@ public struct OverlayState: Equatable, Sendable {
     /// timer reaches its click. Drives the same tightening ring as
     /// `closingProgress`, so a forming dwell looks like a forming click.
     public var dwellProgress: Double = 0
+    /// The stick, in `.joystick` cursor mode; nil in `.absolute`.
+    public var joystick: JoystickOverlay?
 
     public init() {}
 }
