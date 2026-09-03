@@ -11,6 +11,10 @@ import QuartzCore
 final class PawvisController: ObservableObject {
     let settingsStore: SettingsStore
     let voice = VoiceController()
+    /// The theremin: hands into sound, with its takes. Owned here, like
+    /// voice control, so the menu can read its state and a take survives
+    /// its window closing; it borrows the camera through `borrowCamera`.
+    let theremin = ThereminSession()
 
     @Published private(set) var trackingActive = false
     @Published private(set) var handsDetected = 0
@@ -76,6 +80,7 @@ final class PawvisController: ObservableObject {
         attention.setConfig(settings.attention.gateConfig())
         projector = ScreenProjector(controlAllDisplays: settings.general.controlAllDisplays)
         mouse = MouseController(projector: projector)
+        theremin.attach(controller: self)
         actionRunner.stopTracking = { [weak self] in self?.stopTracking() }
         actionRunner.toggleVoiceControl = { [weak self] in self?.voice.toggle() }
         actionRunner.onFollowUp = { [weak self] outcome in
@@ -175,7 +180,7 @@ final class PawvisController: ObservableObject {
                 // and has a hand in it, the engine *inherits* the press
                 // instead of releasing it, and a drag lands wherever the new
                 // mapping put the cursor.
-                guard self.trackingActive, !self.trainingActive else { return }
+                guard self.trackingActive, !self.cameraBorrowed else { return }
                 self.releaseEverything()
                 self.engine.reset()
                 self.handsDetected = 0
@@ -316,17 +321,17 @@ final class PawvisController: ObservableObject {
 
         trackingActive = true
 
-        guard !trainingActive else {
-            // The trainer window already owns the camera and deliberately
-            // hides the overlay (`beginTraining`); starting it here would
-            // pop an unrendered overlay over the trainer and fight it for
-            // the capture session. Flipping `trackingActive` is enough for
-            // the menu switch and status row to update right away —
-            // `endTraining` reconciles camera/overlay/engine against
+        guard !cameraBorrowed else {
+            // A window (the trainer, the theremin) already owns the camera
+            // and deliberately hides the overlay (`borrowCamera`); starting
+            // it here would pop an unrendered overlay over that window and
+            // fight it for the capture session. Flipping `trackingActive` is
+            // enough for the menu switch and status row to update right
+            // away — `returnCamera` reconciles camera/overlay/engine against
             // whatever `trackingActive` ends up being once the window
             // closes, so the two callers can never leave the app disagreeing
             // with its own menu about whether tracking is on.
-            Log.app.info("Tracking armed mid-training; camera/overlay follow once the trainer closes")
+            Log.app.info("Tracking armed while the camera is borrowed; camera/overlay follow once it is returned")
             return
         }
         activateTrackingEffects()
@@ -383,13 +388,13 @@ final class PawvisController: ObservableObject {
         throttle.setInteracting(false)
         attention.setInteracting(false)
 
-        guard !trainingActive else {
-            // Stopping the capture session here would cut the trainer's own
-            // feed out from under it — the camera is shared while the
-            // window is open. Flip the flag now (the menu switch and status
-            // row read it directly) and let `endTraining` tear the camera/
-            // overlay down for real once the window closes.
-            Log.app.info("Tracking disarmed mid-training; camera/overlay follow once the trainer closes")
+        guard !cameraBorrowed else {
+            // Stopping the capture session here would cut the borrowing
+            // window's own feed out from under it — the camera is shared
+            // while it is open. Flip the flag now (the menu switch and
+            // status row read it directly) and let `returnCamera` tear the
+            // camera/overlay down for real once the window closes.
+            Log.app.info("Tracking disarmed while the camera is borrowed; camera/overlay follow once it is returned")
             return
         }
         deactivateTrackingEffects()
@@ -451,10 +456,11 @@ final class PawvisController: ObservableObject {
     /// uses — a button must never stay logically down behind the lock
     /// screen), then stop the camera. Without this, a hand in front of the
     /// camera kept posting synthetic events onto the lock screen itself.
-    /// The trainer is left alone: it posts no events, and freezing its
-    /// preview mid-recording would corrupt the take.
+    /// A window that borrowed the camera is left alone: it posts no events,
+    /// and freezing the trainer's preview mid-recording would corrupt the
+    /// take.
     private func pauseForScreenLock() {
-        guard trackingActive, !pausedForLock, !trainingActive else { return }
+        guard trackingActive, !pausedForLock, !cameraBorrowed else { return }
         pausedForLock = true
         pauseReason = "Paused on the lock screen"
         mouse.apply(engine.forceRelease(at: CACurrentMediaTime()))
@@ -513,12 +519,12 @@ final class PawvisController: ObservableObject {
         if attentive {
             guard attentionPaused else { return }
             attentionPaused = false
-            guard trackingActive, !trainingActive else { return }
+            guard trackingActive, !cameraBorrowed else { return }
             engine.reset()
             overlay.show()
             Log.app.info("Control resumed: facing the screen again")
         } else {
-            guard !attentionPaused, trackingActive, !trainingActive,
+            guard !attentionPaused, trackingActive, !cameraBorrowed,
                   !pausedForLock else { return }
             attentionPaused = true
             // The gate holds open while a press or scroll is in flight, but
@@ -558,15 +564,31 @@ final class PawvisController: ObservableObject {
         Log.camera.info("Camera feed \(dark ? "went dark (no image)" : "has an image again", privacy: .public)")
     }
 
-    // MARK: - Gesture training
+    // MARK: - Borrowing the camera
 
-    /// While the trainer window is open, camera frames bypass the engine
-    /// entirely — no cursor, no clicks, no gesture fires. Training must not
-    /// fight the very motions it is recording.
-    @Published private(set) var trainingActive = false
+    /// A window that takes the camera for itself. While one is open, camera
+    /// frames bypass the engine entirely — no cursor, no clicks, no gesture
+    /// fires — and go to that window's frame tap instead. The trainer must
+    /// not fight the very motions it is recording, and the theremin's hands
+    /// are playing an instrument, not pointing.
+    enum CameraBorrower: Equatable {
+        case gestureTrainer
+        case theremin
+    }
+
+    /// Who has the camera right now, or nil while tracking (or nothing)
+    /// has it. Published so the menu can say the theremin is on.
+    @Published private(set) var cameraBorrower: CameraBorrower?
+
+    /// True while any window has borrowed the camera: the engine, the
+    /// overlay, the watchdog and every pause stand down until it is back.
+    private var cameraBorrowed: Bool { cameraBorrower != nil }
+
     /// The trainer's frame feed, called on the main actor with camera-space
     /// hands and the frame timestamp.
     var trainingFrameTap: (([Hand], TimeInterval) -> Void)?
+    /// The theremin's frame feed, the same shape.
+    var thereminFrameTap: (([Hand], TimeInterval) -> Void)?
 
     /// The practice round's per-frame feed, on the main actor: this frame's
     /// overlay state (armed, grabbed, scrolling, the closing ring) plus the
@@ -577,16 +599,20 @@ final class PawvisController: ObservableObject {
     /// and this feed is only the coaching alongside (see `PracticeCourse`).
     var practiceFrameTap: ((OverlayState, [Hand], TimeInterval) -> Void)?
 
-    func beginTraining() {
-        guard !trainingActive else { return }
-        trainingActive = true
-        // The trainer wants every frame: a throttled preview would record
-        // throttled templates.
-        throttle.setTraining(true)
-        attention.setTraining(true)
+    /// Takes the camera for `borrower`. Returns false, changing nothing,
+    /// when another window already holds it: two borrowers cannot share one
+    /// stream, so the second window says so instead of stealing it.
+    @discardableResult
+    func borrowCamera(for borrower: CameraBorrower) -> Bool {
+        if let current = cameraBorrower { return current == borrower }
+        cameraBorrower = borrower
+        // A borrower wants every frame: a throttled preview would record
+        // throttled templates, and a throttled theremin would stutter.
+        throttle.setCameraBorrowed(true)
+        attention.setCameraBorrowed(true)
         if trackingActive {
             // Let go of anything in flight and hide the overlay; the camera
-            // keeps running, now feeding only the trainer.
+            // keeps running, now feeding only the borrower.
             releaseEverything()
             engine.reset()
             overlay.hide()
@@ -601,7 +627,7 @@ final class PawvisController: ObservableObject {
                     let granted = await Permissions.requestCamera()
                     guard let self else { return }
                     self.cameraPermission = Permissions.camera()
-                    if granted, self.trainingActive {
+                    if granted, self.cameraBorrower == borrower {
                         self.camera.start(deviceID: self.settingsStore.settings.general.cameraDeviceID)
                     }
                 }
@@ -610,40 +636,47 @@ final class PawvisController: ObservableObject {
                 cameraFailure = "Camera access denied — enable it in System Settings → Privacy"
             }
         }
-        Log.app.info("Gesture training started (tracking was \(self.trackingActive))")
+        Log.app.info("Camera borrowed for \(String(describing: borrower), privacy: .public) (tracking was \(self.trackingActive))")
+        return true
     }
 
-    func endTraining() {
-        guard trainingActive else { return }
-        trainingActive = false
-        trainingFrameTap = nil
-        throttle.setTraining(false)
-        attention.setTraining(false)
-        // `trackingActive` may have changed while the trainer had the
+    /// Hands the camera back. A no-op unless `borrower` is the one holding it.
+    func returnCamera(from borrower: CameraBorrower) {
+        guard cameraBorrower == borrower else { return }
+        cameraBorrower = nil
+        switch borrower {
+        case .gestureTrainer: trainingFrameTap = nil
+        case .theremin: thereminFrameTap = nil
+        }
+        throttle.setCameraBorrowed(false)
+        attention.setCameraBorrowed(false)
+        // `trackingActive` may have changed while the window had the
         // camera — `startTracking`/`stopTracking` deliberately keep the menu
-        // switch (and any other caller) live during training instead of
-        // blocking it, only deferring the camera/overlay/engine side
-        // effects. Reconcile against trackingActive's CURRENT value here,
-        // never a snapshot taken back at `beginTraining`, or camera/overlay
-        // can end up disagreeing with what the menu says. The reconcile
-        // re-arms the stall clock with the startup grace, so the watchdog
-        // (which sat out training) never convicts on frames that were the
-        // trainer's to consume.
+        // switch (and any other caller) live meanwhile instead of blocking
+        // it, only deferring the camera/overlay/engine side effects.
+        // Reconcile against trackingActive's CURRENT value here, never a
+        // snapshot taken when the camera was borrowed, or camera/overlay can
+        // end up disagreeing with what the menu says. The reconcile re-arms
+        // the stall clock with the startup grace, so the watchdog (which sat
+        // out the loan) never convicts on frames that were the window's to
+        // consume.
         if trackingActive {
             activateTrackingEffects()
         } else {
             deactivateTrackingEffects()
         }
-        Log.app.info("Gesture training ended")
+        Log.app.info("Camera returned by \(String(describing: borrower), privacy: .public)")
     }
 
-    /// The trainer window's camera view attaches here.
-    func makeTrainingPreviewLayer() -> AVCaptureVideoPreviewLayer {
+    /// A borrowing window's live camera view attaches here.
+    func makeCameraPreviewLayer() -> AVCaptureVideoPreviewLayer {
         camera.makePreviewLayer()
     }
 
-    /// Called when the app is quitting: never leave a button stuck down.
+    /// Called when the app is quitting: never leave a button stuck down,
+    /// and give the camera and the speakers back first.
     func shutdown() {
+        theremin.shutdown()
         stopTracking()
         voice.stop()
     }
@@ -693,7 +726,7 @@ final class PawvisController: ObservableObject {
     }
 
     private func watchdogTick() {
-        guard trackingActive, !trainingActive, !asleep, !pausedForLock else { return }
+        guard trackingActive, !cameraBorrowed, !asleep, !pausedForLock else { return }
         let now = CACurrentMediaTime()
         if let failure = cameraFailure {
             // Frames are arriving again: the failure is over. This lives in
@@ -725,7 +758,7 @@ final class PawvisController: ObservableObject {
     /// button — the same force-release path stopTracking uses — park the
     /// overlay with the reason, and publish it for the menu.
     private func enterCameraFailure(_ reason: String) {
-        guard trackingActive, !trainingActive, !asleep, !pausedForLock else { return }
+        guard trackingActive, !cameraBorrowed, !asleep, !pausedForLock else { return }
         if cameraFailure == nil {
             Log.app.error("Camera failure while tracking: \(reason, privacy: .public)")
             releaseEverything()
@@ -782,7 +815,7 @@ final class PawvisController: ObservableObject {
     /// the watchdog may complain.
     private func systemDidWake() {
         asleep = false
-        guard trackingActive || trainingActive else { return }
+        guard trackingActive || cameraBorrowed else { return }
         // Whoever woke the machine is at it: the attention gate starts
         // fresh, and a pause left over from before sleep resumes now (the
         // resume path is what re-shows the overlay it hid).
@@ -800,10 +833,13 @@ final class PawvisController: ObservableObject {
         // idle throttle is engaged most captured frames never reach this
         // method, and a watchdog that only counted processed frames once
         // convicted a live camera for the throttle's own skipping.
-        if trainingActive {
-            // The trainer owns the stream; nothing reaches the engine or
-            // the mouse while its window is open.
-            trainingFrameTap?(hands, time)
+        if let borrower = cameraBorrower {
+            // A borrowing window owns the stream; nothing reaches the engine
+            // or the mouse while it is open.
+            switch borrower {
+            case .gestureTrainer: trainingFrameTap?(hands, time)
+            case .theremin: thereminFrameTap?(hands, time)
+            }
             return
         }
         guard trackingActive else { return }

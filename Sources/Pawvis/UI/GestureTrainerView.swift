@@ -10,7 +10,7 @@ import SwiftUI
 // until the takes agree well enough to become a matchable template. While
 // the window is open, Pawvis control is suspended entirely: the cursor,
 // clicks, and every other gesture stand down so training can't fight the
-// motions it is recording (`PawvisController.beginTraining`).
+// motions it is recording (`PawvisController.borrowCamera`).
 
 /// Opening the trainer from code, same pattern (and reason) as GuideWindow.
 @MainActor
@@ -53,6 +53,9 @@ final class GestureTrainerModel: ObservableObject {
     /// Set briefly when the draft gesture matches in the try-it phase.
     @Published private(set) var matchFlashUntil: Date = .distantPast
     @Published private(set) var saved = false
+    /// Another window (the theremin) holds the camera, so there is nothing
+    /// to record from until it is switched off.
+    @Published private(set) var cameraBusy = false
 
     private let controller: PawvisController
     private let recorder = TakeRecorder()
@@ -81,6 +84,7 @@ final class GestureTrainerModel: ObservableObject {
     var statusLine: String {
         switch phase {
         case .setup:
+            if cameraBusy { return "The theremin has the camera. Switch it off, then reopen this window." }
             return "Frame yourself so your hand has room to move, then record your first take."
         case .counting(let n):
             return "Get ready… \(n)"
@@ -114,7 +118,7 @@ final class GestureTrainerModel: ObservableObject {
         saved = false
         liveHands = []
         reverdict()
-        controller.beginTraining()
+        cameraBusy = !controller.borrowCamera(for: .gestureTrainer)
         controller.trainingFrameTap = { [weak self] hands, time in
             self?.consume(hands: hands, at: time)
         }
@@ -122,7 +126,7 @@ final class GestureTrainerModel: ObservableObject {
 
     func stop() {
         countdownTimer?.invalidate()
-        controller.endTraining()
+        controller.returnCamera(from: .gestureTrainer)
     }
 
     // MARK: Takes
@@ -488,7 +492,7 @@ private struct CameraPreview: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PreviewHostView {
         let view = PreviewHostView()
-        view.attach(layer: controller.makeTrainingPreviewLayer())
+        view.attach(layer: controller.makeCameraPreviewLayer())
         return view
     }
 

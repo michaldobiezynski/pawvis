@@ -17,7 +17,9 @@ Nothing under your palm, nothing to touch: your hand is the mouse. There's
 also a [voice mode, in beta](#voice-control-beta): talk to your Mac by name
 (*"Pawvis, open Safari"*), with the aim of growing into an
 accessibility-grade voice control more intuitive and capable than the
-built-in one.
+built-in one. And there is a [theremin](#theremin): the same hand tracking
+plays a real instrument, recorded and exported as MP3 without leaving your
+Mac.
 
 Hand tracking runs entirely on-device with Apple's Vision framework; speech
 recognition is Apple's on-device engine; and free-form visual commands are
@@ -151,8 +153,9 @@ with a ring that tightens as your click forms and a pulse confirming every
 click. Small dots mark each detected fingertip.
 
 The menu bar icon opens a live status panel (hands seen, whether control is
-armed, voice-control state, and a camera picker once more than one camera is
-around) plus a **Gesture Guide** window that walks through every gesture.
+armed, voice-control state, the theremin, and a camera picker once more than
+one camera is around) plus a **Gesture Guide** window that walks through every
+gesture.
 
 There is also a **practice round**: a two-minute game that teaches the basic
 moves against live targets (take control, move, click, drag, scroll,
@@ -243,6 +246,52 @@ can read (**Settings → Voice → Open agent log**).
 > command is sent nothing asks again. Turning it on is your call and
 > your responsibility: no liability is accepted for what an agent does with
 > your machine, however it was asked.
+
+## Theremin
+
+Pawvis is also an instrument. **Open** next to *Theremin* in the menu bar
+opens a window with a virtual theremin; switch it on and your hands play it
+the way they would play the real thing. The **right hand's distance to the
+pitch antenna**, drawn at the right edge of the stage, is the pitch: nearer
+is higher. The **left hand's height over the volume loop**, at the bottom
+left, is the loudness: down at the loop is silence. While the theremin is
+on, hand tracking plays the instrument and never touches the mouse; switch
+it off, or close the window, and your hands are the mouse again. The camera
+shows through behind the instrument (mirrored, like the trainer) so the
+zones are easy to find, with a ruler of note names across the pitch zone, a
+tuner that reads the note, cents and Hz, and a live scope.
+
+It is meant to be playable, not a novelty, so it has the controls a
+theremin player wants:
+
+- **Voice**: Classic (a singing, cello-like theremin timbre), sine,
+  triangle, sawtooth or square, with brightness, vibrato depth and speed,
+  reverb and volume. Sawtooth and square are band-limited.
+- **Pitch**: the range (a low note and one to five octaves) is laid out
+  linearly, so equal hand travel is an equal interval, and a glide control
+  sets how quickly the pitch follows the hand. A **scale magnet** pulls the
+  pitch toward the notes of a chosen scale in a chosen key (chromatic,
+  major, natural minor, both pentatonics, blues, whole tone) with an
+  adjustable strength: full strength snaps outright, less keeps glides and
+  vibrato alive. Off is the real instrument, every pitch in between.
+- **Hands**: the classic two-hand layout, or one hand doing both (its height
+  is the volume). The right-most hand is always the pitch hand. With no
+  volume hand the last level holds (full to begin with), so a lone hand can
+  play at once. Optionally, closing the volume hand into a fist mutes, for
+  the staccato a real theremin cannot do.
+- **Recording**: **Record** captures exactly what you hear, reverb included;
+  **Play** plays the take back; **Export** writes it as **MP3** (256 kbit/s,
+  encoded by Pawvis itself, since macOS ships no MP3 encoder) or 24-bit
+  **WAV**. A take stays until you record over it or discard it. Nothing is
+  uploaded anywhere.
+
+The tone, range, scale and layout persist in Settings; power, recording and
+playback do not. The window follows your appearance setting:
+
+<p align="center">
+  <img src="docs/assets/app-theremin.png" alt="The Pawvis Theremin window in dark mode: the stage with the pitch antenna, the volume loop, two tracked hands and the note ruler, a tuner reading C4, a scope, a finished take in the recording strip, and the sound and pitch controls." width="49%">
+  <img src="docs/assets/app-theremin-light.png" alt="The same window in light mode, mid-recording: the Stop button lit, the take strip growing, the tuner reading D5 in tune." width="49%">
+</p>
 
 ## Install
 
@@ -348,6 +397,8 @@ Sources/
                        + the custom one-shot gestures (wiggles, held poses, flings)
                        + user-trained gestures (recorded takes → matched templates)
     Actions/           gesture actions · typed-shortcut parsing · window placement math
+    Theremin/          hands → pitch and volume · scales and notes · the voice (DSP)
+    Audio/             an MPEG-1 Layer III (MP3) encoder
     VoiceControl/      wake-word + command parser · spoken URLs & key chords
     Update/            semantic versions · check / offer / notify policy
     Config/            settings tree (field-tolerant decoding)
@@ -356,11 +407,12 @@ Sources/
     Camera/            AVCaptureSession · Continuity Camera hand-over · Vision hand pose
     Control/           CGEvent mouse + keyboard synthesis
     Overlay/           click-through claw cursor and indicators
+    Theremin/          AVAudioEngine host · take recorder · MP3 and WAV export
     VoiceControl/      on-device speech engine · command executor ·
                        screen context (AX + OCR) · Apple Intelligence resolver
     Update/            update checking · self-update · the "new version" banner
     Support/           permissions · logging · theme
-    App/ UI/           menu bar, settings, gesture guide
+    App/ UI/           menu bar, settings, gesture guide, theremin window
 ```
 
 The gesture engine is deterministic and clock-free, with all timing coming
@@ -379,6 +431,9 @@ and tracking-loss recovery are covered by unit tests rather than by hand.
 - Visual commands are resolved by the on-device Apple Intelligence model; the
   screenshots and accessibility snapshots it reads stay in memory and are
   never written to disk or uploaded.
+- Theremin takes are written to a temporary file on this Mac while you
+  record, and exported only to the file you choose to save. The MP3 encoder
+  is built into Pawvis; no service is involved.
 - The optional agent hand-off is off by default, and it's the one thing that
   leaves your Mac: enable it and everything you say after the wake word is
   sent to the agent CLI you chose (Claude Code or Codex) and runs there with

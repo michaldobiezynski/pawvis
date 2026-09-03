@@ -272,7 +272,7 @@ final class PracticeModel: ObservableObject {
         }
         let phase = now * 0.7
         let wrist = Vec2(0.52 + 0.045 * cos(phase), 0.74 + 0.035 * sin(phase))
-        let hand = Self.demoHand(wrist: wrist)
+        let hand = DemoHand.open(wrist: wrist)
 
         var overlay = OverlayState()
         var mirror = OverlayHand()
@@ -302,31 +302,6 @@ final class PracticeModel: ObservableObject {
         }
         latestOverlay = overlay
         latestHands = [hand]
-    }
-
-    /// `SelfTest`'s open hand, close enough for a mirror: four fingers up
-    /// from the knuckles, thumb out to the side.
-    private static func demoHand(wrist: Vec2, scale: Double = 0.16) -> Hand {
-        var joints: [HandJoint: Vec2] = [.wrist: wrist]
-        let fingers: [(Finger, Vec2, Vec2)] = [
-            (.index, Vec2(-0.25, -0.95), Vec2(0.06, -0.998)),
-            (.middle, Vec2(0, -1.0), Vec2(0, -1)),
-            (.ring, Vec2(0.22, -0.95), Vec2(-0.03, -1)),
-            (.little, Vec2(0.42, -0.85), Vec2(-0.10, -0.995)),
-        ]
-        for (finger, mcpOffset, direction) in fingers {
-            let mcp = wrist + mcpOffset * scale
-            joints[finger.mcp] = mcp
-            joints[finger.pip] = mcp + direction * (0.45 * scale)
-            joints[finger.dip] = mcp + direction * (0.70 * scale)
-            joints[finger.tip] = mcp + direction * (0.95 * scale)
-        }
-        let thumbTip = wrist + Vec2(-0.95, -0.70) * scale
-        joints[.thumbCMC] = wrist + Vec2(-0.35, -0.25) * scale
-        joints[.thumbMP] = wrist.lerp(to: thumbTip, t: 0.45)
-        joints[.thumbIP] = wrist.lerp(to: thumbTip, t: 0.72)
-        joints[.thumbTip] = thumbTip
-        return Hand(chirality: .right, confidence: 1, joints: joints)
     }
 
     // MARK: The tick

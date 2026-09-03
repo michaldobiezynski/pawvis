@@ -12,7 +12,8 @@ struct PawvisApp: App {
                 controller: appDelegate.controller,
                 voice: appDelegate.controller.voice,
                 updater: appDelegate.updater,
-                settingsStore: appDelegate.controller.settingsStore)
+                settingsStore: appDelegate.controller.settingsStore,
+                theremin: appDelegate.controller.theremin)
         } label: {
             MenuBarIcon(voiceActive: appDelegate.controller.voice.state.isActive)
         }
@@ -45,6 +46,12 @@ struct PawvisApp: App {
 
         Window("Pawvis Practice", id: PracticeWindow.id) {
             PracticeView(controller: appDelegate.controller)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
+        Window("Pawvis Theremin", id: ThereminWindow.id) {
+            ThereminView(controller: appDelegate.controller)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -91,6 +98,7 @@ private struct MenuBarIcon: View {
             TrainerWindow.opener = openWindow
             WelcomeWindow.opener = openWindow
             PracticeWindow.opener = openWindow
+            ThereminWindow.opener = openWindow
         }
     }
 }
@@ -135,6 +143,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("Pawvis launched")
+
+        // PAWVIS_APPEARANCE=<light|dark> pins the app's appearance, for
+        // looking at a window in both modes on one machine without touching
+        // the system setting (the eyes-on screenshot pass wants both).
+        if let name = ProcessInfo.processInfo.environment["PAWVIS_APPEARANCE"] {
+            NSApp.appearance = NSAppearance(named: name == "dark" ? .darkAqua : .aqua)
+        }
 
         // Single-instance guard with takeover semantics: the NEWEST launch
         // wins and terminates older instances. (Deferring to the old instance
@@ -249,6 +264,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if let page = ProcessInfo.processInfo.environment["PAWVIS_OPEN_PRACTICE"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 PracticeWindow.show(at: PracticeStartPage(argument: page))
+            }
+        }
+
+        // PAWVIS_OPEN_THEREMIN=1 opens the theremin window at launch — the
+        // eyes-on hook, like PAWVIS_OPEN_PRACTICE. On its own it opens the
+        // window switched off (no camera, no sound); with
+        // PAWVIS_THEREMIN_DEMO=<playing|recording|take> the window switches
+        // itself on and plays a synthetic performance, camera never opened
+        // and speakers muted, so a screenshot shows the instrument in use.
+        if ProcessInfo.processInfo.environment["PAWVIS_OPEN_THEREMIN"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                ThereminWindow.show()
             }
         }
 

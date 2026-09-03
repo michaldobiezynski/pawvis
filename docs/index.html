@@ -244,7 +244,11 @@
       move, including the custom ones you bind. A short practice round, run
       once after the welcome and again from Settings&nbsp;→&nbsp;About, teaches
       the basics against live targets with the tracker's view of your hand
-      beside the board. The mouse set is tunable in
+      beside the board. And the menu opens a theremin: switch it on and your
+      hands play a real instrument, pitch at the antenna on the right, volume
+      over the loop on the left, with a scale magnet and a tuner to play in
+      tune, and recordings you can export as MP3 without anything leaving
+      your Mac. The mouse set is tunable in
       <strong>Settings&nbsp;→&nbsp;Mouse</strong>; the bindable gestures live in
       <strong>Settings&nbsp;→&nbsp;Gestures</strong>, and Settings&nbsp;→&nbsp;Tracking
       can switch the mouse off entirely, leaving your hands as a remote that
@@ -265,8 +269,12 @@
         <figcaption>Settings&nbsp;→&nbsp;Mouse. Every threshold is a slider, not a guess.</figcaption>
       </figure>
       <figure class="shot shot-small">
-        <img src="assets/app-menu.png" alt="The Pawvis menu bar panel: a tracking switch, 'No hands in view', 'Voice control (beta) off', and buttons for Settings, Gesture Guide and Quit." width="600" height="316" loading="lazy">
+        <img src="assets/app-menu.png" alt="The Pawvis menu bar panel: a tracking switch, 'No hands in view', 'Voice control (beta) off', a Theremin row with an Open button, and buttons for Settings, Gesture Guide and Quit." width="600" height="434" loading="lazy">
         <figcaption>The menu bar panel says what it can see, right now.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/app-theremin.png" alt="The Pawvis Theremin window: a dark stage with a pitch antenna on the right, a volume loop at the bottom left, two tracked hands, a note ruler and a tuner reading A4, a scope, a recording strip, and sound, pitch and hands controls on the right." width="1300" height="938" loading="lazy">
+        <figcaption>The theremin. Your right hand's distance to the antenna is the pitch, your left hand's height is the volume; record it and export MP3.</figcaption>
       </figure>
     </div>
   </div>
@@ -515,6 +523,11 @@
       <details class="faq-item">
         <summary>Why does voice's step-by-step autopilot need macOS 26?</summary>
         <p>That mode runs on Apple Intelligence's on-device model, which macOS only ships starting with version 26. Everything else in voice, the wake word, the built-in commands, plain speech recognition, works on macOS 14 already.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Is the theremin a real instrument or a toy?</summary>
+        <p>It is built to be played. The pitch axis is linear in semitones (equal hand travel is an equal interval) over a range you choose, there is a tuner reading the note and cents, a glide control, five voices with brightness, vibrato and reverb, and a scale magnet that pulls the pitch toward the notes of a scale as hard or as gently as you like, so you can actually play in tune while you learn; switch it off for the real, continuous instrument. Record a take and export it as MP3 or 24-bit WAV. The MP3 encoder is inside Pawvis, so exporting never touches a server. Camera-based tracking adds some latency and jitter compared with a real antenna, so treat it as an expressive lead instrument rather than a precision one.</p>
       </details>
 
       <details class="faq-item">

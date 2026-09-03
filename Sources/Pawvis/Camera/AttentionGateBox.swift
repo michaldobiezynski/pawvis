@@ -4,7 +4,7 @@ import PawvisCore
 /// The camera-queue face of the pure `AttentionGate` policy, mirroring
 /// `FrameThrottleBox`: the state machine under one lock, with the
 /// main-actor facts it needs (the tuning, a press or scroll in flight, the
-/// trainer open) mirrored in so the tap can consult them off-main.
+/// camera borrowed by a window) mirrored in so the tap can consult them off-main.
 ///
 /// The tap calls `assess` for every frame that passed the idle throttle; a
 /// frame answered `false` skips hand-pose inference entirely and never
@@ -22,9 +22,10 @@ final class AttentionGateBox: @unchecked Sendable {
     private var gate = AttentionGate()
     /// A button held or a scroll active: the gate must never close mid-press.
     private var interacting = false
-    /// The trainer owns the stream while its window is open; recording a
-    /// gesture must not depend on where the user's face points.
-    private var training = false
+    /// A window (the trainer, the theremin) owns the stream while it is
+    /// open; recording a gesture, or playing a note, must not depend on
+    /// where the user's face points.
+    private var borrowed = false
     /// Frames since the last face observation.
     private var sinceObservation = 0
 
@@ -36,7 +37,7 @@ final class AttentionGateBox: @unchecked Sendable {
     func assess(at time: TimeInterval,
                 observe: () -> AttentionGate.Observation?) -> (attentive: Bool, changed: Bool) {
         lock.lock()
-        guard gate.config.enabled, !training else {
+        guard gate.config.enabled, !borrowed else {
             sinceObservation = 0
             lock.unlock()
             return (true, false)
@@ -69,8 +70,8 @@ final class AttentionGateBox: @unchecked Sendable {
         lock.withLock { interacting = value }
     }
 
-    func setTraining(_ value: Bool) {
-        lock.withLock { training = value }
+    func setCameraBorrowed(_ value: Bool) {
+        lock.withLock { borrowed = value }
     }
 
     /// A fresh tracking session (start, resume from the lock screen) begins

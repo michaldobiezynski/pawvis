@@ -3,7 +3,7 @@ import PawvisCore
 
 /// The camera-queue face of the pure `IdleThrottle` and `CameraStallClock`
 /// policies: the state machines under one lock, with the main-actor facts
-/// they need (a press or scroll in flight, the trainer open, Low Power Mode)
+/// they need (a press or scroll in flight, a window borrowing the camera, Low Power Mode)
 /// mirrored in so the tap can consult them off-main without touching the
 /// main actor.
 ///
@@ -27,9 +27,10 @@ final class FrameThrottleBox: @unchecked Sendable {
     /// A button held or a scroll active: never throttle. Hands are obviously
     /// present then, but the guard is explicit, not inferred.
     private var interacting = false
-    /// The trainer owns the stream while its window is open, and it wants
-    /// every frame — a 5 fps preview would record 5 fps templates.
-    private var training = false
+    /// A window (the trainer, the theremin) owns the stream while it is
+    /// open, and it wants every frame — a 5 fps preview would record 5 fps
+    /// templates, and a 5 fps theremin would stutter.
+    private var borrowed = false
     private var lowPower = false
     /// Captured frames since launch, stamped at the tap alongside the stall
     /// clock. The watchdog uses it as *positive* evidence that a camera is
@@ -46,7 +47,7 @@ final class FrameThrottleBox: @unchecked Sendable {
             stall.noteFrame(at: time)
             frameCount &+= 1
             return throttle.shouldRunInference(at: time,
-                                               exempt: interacting || training,
+                                               exempt: interacting || borrowed,
                                                lowPower: lowPower)
         }
     }
@@ -78,8 +79,8 @@ final class FrameThrottleBox: @unchecked Sendable {
         lock.withLock { interacting = value }
     }
 
-    func setTraining(_ value: Bool) {
-        lock.withLock { training = value }
+    func setCameraBorrowed(_ value: Bool) {
+        lock.withLock { borrowed = value }
     }
 
     func setLowPower(_ value: Bool) {
