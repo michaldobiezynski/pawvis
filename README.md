@@ -69,6 +69,19 @@ fingers are the buttons. Everything below is tunable in **Settings →
 Mouse**.
 
 - **Move**: hold your hand open, fingers up, and move it.
+- **Joystick mode** (optional, off by default): steer instead of point.
+  **Settings → Mouse → Cursor control** switches it on. The spot where you
+  show your open hand becomes a centre; push your hand away from it and the
+  cursor glides that way, faster the further you push, and it holds still
+  while your hand rests near the centre. Your hand barely travels, so it
+  never wanders out of the camera's view. Make a fist to park, then reopen
+  anywhere to carry on from where the cursor is; clicks, drags, scrolling
+  and dwell all work as before. A heads-up pad on screen shows the centre,
+  the dead zone, the throw ring and your push. It sits above every window,
+  and Settings has its opacity, a position picker, and an unlock switch so
+  you can drag it wherever you like (it locks itself again at launch).
+  Dead zone, steering throw and top speed are sliders, and Reach still
+  scales the throw with your distance from the camera.
 - **Click**: dip your **index finger**, like tapping a mouse button.
   Measured against your middle finger, so tilting your whole hand can't
   click. A quick release is always a clean click.
