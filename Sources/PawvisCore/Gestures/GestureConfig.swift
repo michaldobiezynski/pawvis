@@ -208,7 +208,7 @@ public struct GestureConfig: Codable, Equatable, Sendable {
     /// Direct mapping or joystick steering (see `CursorMode`).
     public var cursorMode: CursorMode = .absolute
     /// Joystick: how far (screen-normalised) the hand may stray from the
-    /// centre before the cursor moves at all — the stick's slack, so a
+    /// centre before the cursor moves at all: the stick's slack, so a
     /// hand held roughly still never creeps.
     public var joystickDeadZone: Double = 0.04
     /// Joystick: the offset (screen-normalised) at which the cursor reaches

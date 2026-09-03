@@ -53,7 +53,7 @@ public struct JoystickOverlay: Equatable, Sendable {
     /// unclamped; zero while no centre is held (parked, or no hand).
     public var offset: Vec2
     /// How hard the stick is pushing: 0 inside the dead zone, 1 at full
-    /// throw and beyond — the speed fraction, after the response curve.
+    /// throw and beyond: the speed fraction, after the response curve.
     public var deflection: Double
 
     public init(offset: Vec2 = .zero, deflection: Double = 0) {

@@ -39,8 +39,10 @@ public final class GestureEngine {
             if config.cursorMode != oldValue.cursorMode {
                 // The old mode's centre means nothing to the new one; the
                 // cursor itself stays put, and the next armed frame either
-                // captures a fresh centre or follows the hand outright.
+                // follows the hand outright or settles a fresh centre and
+                // steers on from wherever direct mode left the cursor.
                 clearJoystick()
+                joystickPosition = nil
             }
             if config.smoothing != oldValue.smoothing {
                 for i in slots.indices { slots[i].setFilterParams(config.smoothing) }
@@ -304,23 +306,44 @@ public final class GestureEngine {
     private var pointedFrames = 0
 
     private var cursor: Vec2?
-    /// Joystick mode: the pointer position captured when control armed, the
-    /// stick's centre. nil while parked, while no hand holds control, and
-    /// always in `.absolute` mode — so it doubles as "steering right now".
+    /// Joystick mode: the stick's centre, captured once the armed hand has
+    /// settled. nil while waiting for that, while no hand holds control, and
+    /// always in `.absolute` mode.
     private var joystickCentre: Vec2?
     /// Joystick mode: the steered position, integrated every armed frame.
-    /// `cursor` follows it through the usual jitter deadband.
+    /// `cursor` follows it through the usual jitter deadband. Survives
+    /// `reset()` (and the app seeds it with the real pointer), so a camera
+    /// swap or a look away never warps the cursor to the middle.
     private var joystickPosition: Vec2?
     private var joystickLastTime: TimeInterval?
+    /// The previous steered frame's pointer, for the stillness checks.
+    private var joystickLastPointer: Vec2?
+    /// Consecutive still frames while waiting to capture a centre.
+    private var joystickSettleFrames = 0
+    /// The last frame's deflection: 0 whenever the stick is not pushing, which
+    /// is when the auto-reach box is free to drift.
+    private(set) var joystickDeflection = 0.0
     /// A gap longer than this between steered frames (a dropout inside the
     /// tracking-loss grace, a stalled camera) integrates nothing: the stick
     /// was pushing the whole time, but a cursor that leaps to "where it
     /// would have been" is a cursor that leapt.
     private static let joystickMaxStep: TimeInterval = 0.15
-    /// Where the joystick starts the very first time it arms — the engine
-    /// has no idea where the real pointer is, and the middle is the one
-    /// place every steer can reach quickly.
+    /// Where the joystick starts the very first time it arms, absent a seed:
+    /// the middle is the one place every steer can reach quickly.
     private static let joystickHome = Vec2(0.5, 0.5)
+    /// Still frames (pointer travel under `joystickSettleTravel`) before the
+    /// hand's position is taken as the centre. Arming lands mid-travel more
+    /// often than not: the open hand is still on its way to where it means
+    /// to rest, and a centre captured there is a push the user never made.
+    private static let joystickSettleFrames = 3
+    /// Screen-normalised travel per frame that still reads as "holding
+    /// still": a little over the drag deadband, under any deliberate push.
+    private static let joystickSettleTravel = 0.012
+    /// How much of the gap to a still hand resting inside the dead zone the
+    /// centre closes each frame: the rest position becomes the centre in
+    /// about half a second, so drift (the hand, or the auto-reach box) never
+    /// accumulates into a push.
+    private static let joystickRecentreLerp = 0.08
     /// At most one press exists at a time, whichever button owns it.
     private var press: PressState?
     private var leftButton = ButtonState()
@@ -376,8 +399,7 @@ public final class GestureEngine {
         cursor = nil
         lastHandTime = -.infinity
         smoothedHandScale = nil
-        clearJoystick()
-        joystickPosition = nil
+        clearJoystick() // the steered position stays: resets must not warp the cursor
         armed = config.controlTrigger == .anyHand
         armFrames = 0
         disarmFrames = 0
@@ -441,6 +463,7 @@ public final class GestureEngine {
                && (armFeatures(of: $0.hand)?.isOpenHand() ?? false) }) {
             primary = open
             primarySlotID = open.slotID
+            clearJoystick()
         }
 
         let features = HandFeatures(
@@ -453,7 +476,7 @@ public final class GestureEngine {
         if !armed {
             // Disarmed (a fist, or waiting for the trigger): the stick's
             // centre is gone with it, and the next arm captures a new one
-            // wherever the hand then is — which is the whole point.
+            // wherever the hand then settles, which is the whole point.
             clearJoystick()
         }
 
@@ -498,15 +521,14 @@ public final class GestureEngine {
             // wave must not let the cursor creep while the hand is busy.
             let clamped: Vec2
             if config.cursorMode == .joystick {
+                // A pointed hand does not park the stick: pushing the hand
+                // down or forward tips the fingers toward the camera, and a
+                // stick that stalled on that could never steer down. The
+                // buttons still honour the pointed park below.
                 let parked = scroll.active || crissCrossParked || grabParked
-                    || (pointedParked && press == nil)
-                clamped = steer(pointer, at: frame.time, parked: parked)
-                if let centre = joystickCentre {
-                    let offset = pointer - centre
-                    overlay.joystick = JoystickOverlay(
-                        offset: offset,
-                        deflection: Self.joystickVelocity(offset: offset, config: config).deflection)
-                }
+                let steered = steer(pointer, at: frame.time, parked: parked)
+                clamped = steered.position
+                overlay.joystick = steered.stick
             } else {
                 clamped = pointer.clampedToUnit()
             }
@@ -562,11 +584,12 @@ public final class GestureEngine {
                         events.append(.drag(p.button, to: clamped))
                     }
                 }
-            } else if pointedParked {
+            } else if pointedParked, config.cursorMode == .absolute {
                 // Pointed at the screen: the cursor parks so drumming
                 // fingers don't smear it around. After the press branch —
                 // a press begun upright finishes normally if the hand
-                // droops mid-drag.
+                // droops mid-drag. Direct mode only: the joystick's pointer
+                // is a stick, and drumming stays inside its dead zone.
             } else if cursor.map({ clamped.distance(to: $0) >= config.jitterDeadband / 2 }) ?? true {
                 cursor = clamped
                 events.append(.move(to: clamped))
@@ -687,6 +710,9 @@ public final class GestureEngine {
         let primary = tracked.max(by: { $0.hand.confidence < $1.hand.confidence })!
         let inherited = primarySlotID != nil
         primarySlotID = primary.slotID
+        // The joystick's centre belongs to the hand that settled it, never to
+        // the slot: an inheriting hand starts from its own rest position.
+        clearJoystick()
         if inherited, config.controlTrigger == .openHand, armed {
             // The grace just expired: the departed hand's press releases
             // where it was held, and its click chain and half-run button
@@ -1335,7 +1361,7 @@ public final class GestureEngine {
     /// screen-normalised units per second, and the deflection (0…1) that
     /// produced it. Zero inside the dead zone; from there the speed rises
     /// along `joystickCurve` to `joystickMaxSpeed` at `joystickThrow`, and
-    /// pushing past the throw changes nothing — the stick is at its stop.
+    /// pushing past the throw changes nothing: the stick is at its stop.
     static func joystickVelocity(offset: Vec2, config: GestureConfig) -> (velocity: Vec2, deflection: Double) {
         let magnitude = offset.length
         let deadZone = config.joystickDeadZone
@@ -1346,36 +1372,67 @@ public final class GestureEngine {
         return (offset / magnitude * (config.joystickMaxSpeed * deflection), deflection)
     }
 
-    /// One armed frame of the joystick. The first captures `pointer` as the
-    /// centre and answers the cursor's current position (or the screen's
-    /// middle, the first time ever), so arming never jumps the cursor; the
-    /// rest integrate the stick's velocity over the frame gap. `parked`
-    /// frames (a scroll, a wave, a grab) keep the clock but add nothing.
-    private func steer(_ pointer: Vec2, at time: TimeInterval, parked: Bool) -> Vec2 {
-        guard let centre = joystickCentre else {
-            joystickCentre = pointer
-            joystickLastTime = time
-            let start = cursor ?? Self.joystickHome
-            joystickPosition = start
-            return start
-        }
-        let elapsed = time - (joystickLastTime ?? time)
-        joystickLastTime = time
-        var position = joystickPosition ?? cursor ?? Self.joystickHome
-        if !parked, elapsed > 0, elapsed <= Self.joystickMaxStep {
-            let velocity = Self.joystickVelocity(offset: pointer - centre, config: config).velocity
-            position = (position + velocity * elapsed).clampedToUnit()
-        }
-        joystickPosition = position
-        return position
+    /// Where the joystick resumes from. The app calls this with the real
+    /// pointer after every engine reset (a camera swap, a look away, the
+    /// screen unlocking), so steering carries on from the cursor the user
+    /// can see rather than from the middle of the screen.
+    public func seedJoystick(at position: Vec2) {
+        joystickPosition = position.clampedToUnit()
     }
 
-    /// Forget the stick's centre (and its clock): the next armed frame in
-    /// joystick mode captures a new one. The steered position survives, so
-    /// control resumes from wherever the cursor was left.
+    /// One armed frame of the joystick: the steered position, and the stick
+    /// for the pad. Until the hand has held still for `joystickSettleFrames`
+    /// there is no centre and nothing moves; then the rest position is the
+    /// centre. `parked` frames (a scroll, a wave, a grab) are hand travel
+    /// that must not become a push, so the centre follows the hand through
+    /// them and unparking starts neutral. A hand resting inside the dead
+    /// zone pulls the centre onto itself, so drift never accumulates.
+    private func steer(_ pointer: Vec2, at time: TimeInterval, parked: Bool)
+        -> (position: Vec2, stick: JoystickOverlay) {
+        let elapsed = joystickLastTime.map { time - $0 } ?? 0
+        joystickLastTime = time
+        let still = joystickLastPointer.map { pointer.distance(to: $0) <= Self.joystickSettleTravel } ?? false
+        joystickLastPointer = pointer
+        var position = joystickPosition ?? cursor ?? Self.joystickHome
+        joystickPosition = position
+
+        guard let centre = joystickCentre else {
+            joystickSettleFrames = still ? joystickSettleFrames + 1 : 0
+            if joystickSettleFrames >= Self.joystickSettleFrames {
+                joystickCentre = pointer
+                joystickSettleFrames = 0
+            }
+            joystickDeflection = 0
+            return (position, JoystickOverlay())
+        }
+        if parked {
+            joystickCentre = pointer
+            joystickDeflection = 0
+            return (position, JoystickOverlay())
+        }
+        let offset = pointer - centre
+        let (velocity, deflection) = Self.joystickVelocity(offset: offset, config: config)
+        if deflection == 0, still {
+            joystickCentre = centre.lerp(to: pointer, t: Self.joystickRecentreLerp)
+        }
+        if elapsed > 0, elapsed <= Self.joystickMaxStep {
+            position = (position + velocity * elapsed).clampedToUnit()
+            joystickPosition = position
+        }
+        joystickDeflection = deflection
+        return (position, JoystickOverlay(offset: offset, deflection: deflection))
+    }
+
+    /// Forget the stick's centre (and its clock and settle count): the next
+    /// armed frames in joystick mode wait for the hand to settle and capture
+    /// a new one. The steered position survives, so control resumes from
+    /// wherever the cursor was left.
     private func clearJoystick() {
         joystickCentre = nil
         joystickLastTime = nil
+        joystickLastPointer = nil
+        joystickSettleFrames = 0
+        joystickDeflection = 0
     }
 
     // MARK: - Auto reach
@@ -1402,11 +1459,13 @@ public final class GestureEngine {
         // a fixed palm emitted ~0.19 screen-normalized units of phantom
         // scroll before this guard existed). Released, either way, the
         // drift picks back up.
-        // Nor mid-steer: the joystick measures its offset in the box's
-        // space, so a box drifting under a held stick would remap a still
-        // hand to a growing offset and steer the cursor on its own — the
-        // phantom-scroll bug, wearing a different hat. Parked, it re-fits.
-        guard press == nil, !scroll.active, joystickCentre == nil,
+        // Nor while the stick is pushing: the joystick measures its offset
+        // in the box's space, so a box drifting under a held stick would
+        // remap a still hand to a growing offset and steer the cursor on
+        // its own (the phantom-scroll bug, wearing a different hat). At
+        // rest inside the dead zone the centre tracks the hand, so a drift
+        // there is harmless and the box may fit.
+        guard press == nil, !scroll.active, joystickDeflection == 0,
               let scale = smoothedHandScale else { return }
         let target = Self.targetBox(forHandScale: scale)
         func drift(_ edge: Double, toward goal: Double) -> Double {

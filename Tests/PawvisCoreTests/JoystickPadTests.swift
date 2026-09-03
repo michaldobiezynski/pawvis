@@ -21,18 +21,18 @@ final class JoystickPadTests: XCTestCase {
         XCTAssertEqual(PawvisSettings.default.joystickPad, config)
     }
 
-    func testEveryAnchorStandsTheMarginOffTheEdges() {
-        for anchor in JoystickPadAnchor.allCases where anchor != .custom {
-            let centre = config(anchor).centre(inAreaOfSize: area)
-            XCTAssertGreaterThanOrEqual(centre.x, inset, "\(anchor)")
-            XCTAssertLessThanOrEqual(centre.x, area.x - inset, "\(anchor)")
-            XCTAssertGreaterThanOrEqual(centre.y, inset, "\(anchor)")
-            XCTAssertLessThanOrEqual(centre.y, area.y - inset, "\(anchor)")
+    func testEveryAnchorLandsExactlyWhereItSays() {
+        let low = inset, midX = area.x / 2, midY = area.y / 2
+        let highX = area.x - inset, highY = area.y - inset
+        let expected: [(JoystickPadAnchor, Vec2)] = [
+            (.topLeft, Vec2(low, highY)), (.top, Vec2(midX, highY)), (.topRight, Vec2(highX, highY)),
+            (.left, Vec2(low, midY)), (.centre, Vec2(midX, midY)), (.right, Vec2(highX, midY)),
+            (.bottomLeft, Vec2(low, low)), (.bottom, Vec2(midX, low)), (.bottomRight, Vec2(highX, low)),
+        ]
+        XCTAssertEqual(expected.count, JoystickPadAnchor.allCases.count - 1, "every anchor but custom is pinned")
+        for (anchor, centre) in expected {
+            XCTAssertEqual(config(anchor).centre(inAreaOfSize: area), centre, "\(anchor)")
         }
-        XCTAssertEqual(config(.topLeft).centre(inAreaOfSize: area), Vec2(inset, area.y - inset))
-        XCTAssertEqual(config(.bottomRight).centre(inAreaOfSize: area), Vec2(area.x - inset, inset))
-        XCTAssertEqual(config(.centre).centre(inAreaOfSize: area), Vec2(area.x / 2, area.y / 2))
-        XCTAssertEqual(config(.top).centre(inAreaOfSize: area), Vec2(area.x / 2, area.y - inset))
     }
 
     func testACustomCentreIsPulledInsideTheSameBounds() {
