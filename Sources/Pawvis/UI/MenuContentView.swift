@@ -43,6 +43,9 @@ struct MenuContentView: View {
     /// `controller` would leave the checkmark stale until the menu closed and
     /// reopened.
     @ObservedObject var settingsStore: SettingsStore
+    /// The theremin, for its row: on/off, what it is playing, and the chip
+    /// that opens its window.
+    @ObservedObject var theremin: ThereminSession
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
@@ -124,6 +127,23 @@ struct MenuContentView: View {
                           && !voice.state.isActive)
             }
 
+            // The theremin: the instrument the hands can play instead of
+            // the mouse. Violet, like the Gesture Guide chip — opening one
+            // of our own windows — and the waveform glyph takes the
+            // attention color while it is on, as the mic does while live.
+            HStack(spacing: 8) {
+                Image(systemName: theremin.isOn ? "waveform" : "waveform.slash")
+                    .foregroundStyle(theremin.isOn ? PawvisTheme.attentionUI : Color.secondary)
+                    .frame(width: 18)
+                ThereminMenuStatus(session: theremin, live: theremin.live)
+                Spacer()
+                Button("Open") {
+                    dismiss() // close the menu bar popover — it floats above windows
+                    ThereminWindow.show()
+                }
+                .buttonStyle(PawvisButtonStyle(chip: PawvisTheme.chipPurple))
+                .help("Open the theremin window")
+            }
         }
     }
 

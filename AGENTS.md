@@ -51,6 +51,21 @@ Extras:
   recorded clip and print every pause/resume transition (per-sample head
   yaw/pitch with `--verbose`). Same reasoning as `--gesture-eval`: what
   Vision reports for a real head mid-turn is a question for the machine.
+- `PAWVIS_OPEN_THEREMIN=1` — open the theremin window at launch, switched
+  off (no camera, no sound). With `PAWVIS_THEREMIN_DEMO=<playing|recording|
+  take>` the window switches itself on and plays a synthetic two-handed
+  phrase, with the camera never opened and the speakers muted (the
+  recording tap sits upstream of the mute, so a demo take is real audio):
+  the eyes-on hook for the instrument on a machine with no hand in front of
+  it. `recording` starts a take half a second in; `take` stops it five
+  seconds later so the strip shows a finished take.
+- `PAWVIS_APPEARANCE=<light|dark>` — pin the app's appearance for the run,
+  so both modes can be looked at without touching the system setting.
+- `Pawvis --mp3-encode <audio file> <out.mp3> [bitrate]` — encode any file
+  AVFoundation can read with the app's own MP3 encoder. The ground-truth
+  harness for the encoder: decode the result with something that shares no
+  code with it (ffmpeg, a browser, a phone) and compare. See
+  [The theremin](#the-theremin).
 - `Pawvis --cameras [uniqueID]` — list every camera macOS offers the binary,
   typed the way `CameraSelectionPolicy` sees them, and where Automatic (or
   the given pick) lands. Run it from `build/Pawvis.app/Contents/MacOS/Pawvis`:
@@ -603,10 +618,11 @@ threshold. Its constraints:
   the screen-space stream, which is mirrored and stretched through the
   interaction box, where a camera-space template can never match
   (measured: trained gestures fired in the trainer and never in use).
-- **Training suspends control.** The trainer taps the camera stream ahead
-  of the engine (`PawvisController.beginTraining`): nothing reaches the
-  mouse or the other detectors while the window is open, because training
-  must not fight the very motions it records.
+- **Training suspends control.** The trainer borrows the camera ahead of
+  the engine (`PawvisController.borrowCamera(for: .gestureTrainer)`, the
+  same path the theremin uses): nothing reaches the mouse or the other
+  detectors while the window is open, because training must not fight the
+  very motions it records.
 - **Firing latches until the match visibly breaks** (distance 1.3× over
   threshold), so a *held* trained pose fires once per performance, not
   once per refractory — the custom hold-pose lesson, applied here.
@@ -738,6 +754,92 @@ Settings → Mouse. Its rules, each deliberate:
   every time.
 - **Everything is skippable**: each lesson has a Skip, the intro has Skip
   for now, and closing the window is fine at any point.
+
+## The theremin
+
+Pawvis as an instrument (`ThereminView`, `ThereminStage`, `ThereminSession`,
+`ThereminAudio` in the app; `ThereminTracker`, `MusicTheory`, `ThereminVoice`
+and `MP3Encoder` in PawvisCore), opened from the menu's Theremin row. It is
+meant to be playable rather than a novelty, and its rules follow the real
+instrument where the real instrument is learnable and depart where it is
+merely difficult:
+
+- **Switching on borrows the camera, the same way the trainer does.**
+  `beginTraining`/`endTraining` became `borrowCamera(for:)` /
+  `returnCamera(from:)` with a `CameraBorrower` enum; while any window holds
+  the camera, frames bypass the engine and go to that window's frame tap,
+  the overlay hides, the watchdog and the pauses stand down, the idle
+  throttle and the attention gate are exempt (you look at your hands, not
+  the screen), and the menu switch stays live and is reconciled on return.
+  One borrower at a time: the second window says so instead of stealing
+  the stream. The window closing switches the instrument off, so mouse
+  control can never stay parked behind an invisible theremin.
+- **The right-most hand is the pitch hand.** Vision's chirality flips under
+  mirroring and on hands seen edge-on; position is what a theremin goes by.
+  The pitch antenna stands at the right edge of the view and the hand's
+  distance to it is the pitch, linear in semitones (`pitchZone`, 0.42…0.92
+  of the width), which is the response that can be learned; the volume
+  hand's height over the loop at the bottom left is the level, squared
+  (`volumeZone`). Palm centre, not fingertip, so a finger twitch is not a
+  pitch wobble; One Euro smoothing as for the cursor.
+- **No volume hand means the last level holds, full at first.** A lone hand
+  sounds at once (the instrument is discoverable), and a volume hand that
+  drops out of frame at the loop does not make the note leap to full; both
+  hands gone resets it. A pitch hand that flickers out holds the note for
+  `trackingLossGrace` (0.25 s), because Vision drops a hand now and then and
+  a stuttering tone is unplayable.
+- **The scale magnet is a blend, not a switch.** `MusicTheory.snap` pulls
+  the fractional pitch toward the nearest note of the scale by the snap
+  strength, so partial strength keeps glides and vibrato while making the
+  instrument playable in tune; full strength quantizes; off is the real
+  instrument.
+- **The voice is pure and testable.** `ThereminVoice` renders sample by
+  sample (glide in the log domain, vibrato LFO, PolyBLEP sawtooth and
+  square, a pitch-tracking two-pole filter so the timbre holds across the
+  range, attack/release smoothing with a −80 dB silence snap). The tests
+  count zero crossings and sample-to-sample steps. `ThereminAudio` hosts it
+  in an `AVAudioEngine` at a fixed 48 kHz stereo (the mixer converts to the
+  device; recordings land at a rate MPEG-1 encodes natively), through an
+  `AVAudioUnitReverb`, with the recording tap on the reverb's output so a
+  take is exactly what was heard and playback (which joins at the mixer)
+  never records over it. The demo mute is the mixer's output volume,
+  downstream of that tap.
+- **Settings are the player's, transient state is not.** Tone, range, scale
+  and layout are `settings.theremin` (`ThereminConfig`, tolerant decoding
+  with clamps). Power, recording and playback live in `ThereminSession`,
+  which the controller owns like voice control, so the menu reads it and a
+  take outlives the window. Takes are CAF files in a temp directory,
+  deleted on discard, replace, or quit.
+
+**The MP3 encoder exists because macOS has none.** Measured on macOS 26.5:
+`AudioConverterNew` from LPCM to `kAudioFormatMPEGLayer3` fails with `fmt?`,
+and `afconvert -f MPG3 -d .mp3` fails the same way (the format is listed as
+a *file* type, not an encoder). Options were a Homebrew `lame`/`ffmpeg`
+dependency users would not have, an LGPL library bundled into an MIT app, or
+our own. `MP3Encoder` is our own: MPEG-1 Layer III in plain Swift following
+the ISO reference encoder's structure (polyphase analysis with the C.1
+window, 18-point MDCT with the B.9 alias butterflies, a bisected
+global-gain quantizer, Huffman coding with the B.7 tables), constant
+bitrate, long blocks only, no bit reservoir (`main_data_begin` is 0 and a
+granule's leftover bits pass to the next granule in the same frame), no
+psychoacoustic model and no scalefactors. Quantization noise is therefore
+flat, set by one gain per granule: transparent for tonal material at
+192 kbit/s and up (the theremin exports at 256), audibly coarser than LAME
+on dense mixes, which is not what it is for. Rules for touching it:
+
+- **The tables are generated, never typed.** `scripts/make_mp3_tables.py`
+  reads the normative tables out of a pinned copy of the shine reference
+  encoder and writes `MP3Tables.swift`; the unit tests check every Huffman
+  table is prefix-free and complete, which a single mistyped entry fails.
+- **Verify with a decoder that shares nothing with the encoder.** The unit
+  tests prove the frames are well-formed (headers tile the stream, side
+  information parses by the standard's layout, padding keeps the mean
+  rate); `--selftest` (`mp3.*` rows) decodes a tone through AVFoundation
+  and checks it comes back at the same frequency and level; and
+  `--mp3-encode` plus ffmpeg is the cross-check by hand (a `-6 dBFS` tone
+  should come back within a dB, and an SNR in the tens of dB). A bitstream
+  bug is invisible from inside the encoder, and the frame parser reading
+  our own header is an echo chamber.
 
 ## Gesture art
 

@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import Foundation
 import PawvisCore
@@ -181,6 +182,37 @@ func runSelfTest() -> Int32 {
           && !PracticePolicy.opensAfterWelcome(
               seen: true, lessons: PracticeCourse.lessons(for: .default))
           && !PracticePolicy.opensAfterWelcome(seen: false, lessons: []))
+
+    // The theremin's MP3 export: the encoder is ours, so its frames are
+    // judged by a decoder that shares nothing with it — AVFoundation's.
+    // A 440 Hz tone must come back at 440 Hz, at the level it went in at,
+    // and parse as the stereo 48 kHz frames the header claims.
+    let roundTrip = mp3RoundTrip()
+    check("mp3.framesParseAsRequested", roundTrip.framesOK)
+    check("mp3.decodesToTheSameFrequency", roundTrip.frequencyOK)
+    check("mp3.decodesAtTheSameLevel", roundTrip.levelOK)
+
+    // The theremin's settings travel with the tree, and the instrument's
+    // pure rules agree with the window's copy: the right-most hand is pitch,
+    // and a lone hand sounds at once.
+    var thereminSettings = PawvisSettings.default
+    thereminSettings.theremin.scale = .pentatonicMajor
+    thereminSettings.theremin.lowNote = 60
+    if let data = try? JSONEncoder().encode(thereminSettings),
+       let decoded = try? JSONDecoder().decode(PawvisSettings.self, from: data) {
+        check("theremin.settingsRoundtrip", decoded == thereminSettings)
+    } else {
+        check("theremin.settingsRoundtrip", false)
+    }
+    var thereminTracker = ThereminTracker(config: ThereminConfig(), mirror: false)
+    let thereminReading = thereminTracker.update(
+        hands: [openHand(wrist: Vec2(0.25, 0.6)), openHand(wrist: Vec2(0.8, 0.6))], at: 0)
+    check("theremin.rightMostHandIsPitch",
+          thereminReading.hands.map(\.role) == [.pitch, .volume] && thereminReading.isSounding)
+    thereminTracker.reset()
+    check("theremin.loneHandSoundsAtFullVolume",
+          thereminTracker.update(hands: [openHand(wrist: Vec2(0.7, 0.6))], at: 0).amplitude == 1)
+    check("theremin.a4Is440Hz", abs(MusicTheory.frequency(midi: 69) - 440) < 1e-9)
 
     // Camera selection: an explicit pick wins; Automatic is the built-in
     // camera and never an iPhone that happens to be around; a pick that
@@ -469,4 +501,52 @@ func runSelfTest() -> Int32 {
 
     print(failures == 0 ? "SELFTEST OK (\(checks) checks)" : "SELFTEST FAILED (\(failures) failures)")
     return failures == 0 ? 0 : 1
+}
+
+/// Encodes a stereo 440 Hz tone with `MP3Encoder`, decodes the file with
+/// AVFoundation, and reports whether the frames parsed as requested, the
+/// tone came back at the same frequency (zero crossings over the middle
+/// second) and at the same level (RMS within 15%).
+private func mp3RoundTrip() -> (framesOK: Bool, frequencyOK: Bool, levelOK: Bool) {
+    let rate = 48_000
+    let seconds = 2.5
+    let amplitude: Float = 0.5
+    let count = Int(seconds * Double(rate))
+    let tone = (0..<count).map { amplitude * Float(sin(2 * .pi * 440 * Double($0) / Double(rate))) }
+    guard let encoder = try? MP3Encoder(sampleRate: rate, channels: 2, bitrate: 256) else {
+        return (false, false, false)
+    }
+    encoder.append([tone, tone])
+    let data = encoder.finish()
+    let frames = MP3Encoder.frames(in: data)
+    let framesOK = !frames.isEmpty
+        && frames.map(\.frameBytes).reduce(0, +) == data.count
+        && frames.allSatisfy { $0.sampleRate == rate && $0.channels == 2 && $0.bitrate == 256 }
+
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("pawvis-selftest-\(UUID().uuidString).mp3")
+    defer { try? FileManager.default.removeItem(at: url) }
+    guard (try? data.write(to: url)) != nil,
+          let file = try? AVAudioFile(forReading: url),
+          let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                        frameCapacity: AVAudioFrameCount(file.length)),
+          (try? file.read(into: buffer)) != nil,
+          let channels = buffer.floatChannelData, buffer.frameLength > AVAudioFrameCount(rate * 2)
+    else { return (framesOK, false, false) }
+    let decoded = Array(UnsafeBufferPointer(start: channels[0], count: Int(buffer.frameLength)))
+    // The middle second, clear of the encoder delay and the padded tail.
+    let window = decoded[(rate / 2)..<(rate / 2 + rate)]
+    var crossings = 0
+    var previous = window.first ?? 0
+    var energy: Double = 0
+    for sample in window.dropFirst() {
+        if (previous < 0 && sample >= 0) || (previous >= 0 && sample < 0) { crossings += 1 }
+        previous = sample
+        energy += Double(sample * sample)
+    }
+    let rms = (energy / Double(window.count - 1)).squareRoot()
+    let expectedRMS = Double(amplitude) / 2.0.squareRoot()
+    let frequencyOK = abs(crossings - 880) <= 8
+    let levelOK = abs(rms - expectedRMS) / expectedRMS < 0.15
+    return (framesOK, frequencyOK, levelOK)
 }
