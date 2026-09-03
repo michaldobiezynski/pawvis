@@ -86,6 +86,7 @@ public struct PawvisSettings: Codable, Equatable, Sendable {
     public var general: GeneralConfig = GeneralConfig()
     public var attention: AttentionConfig = AttentionConfig()
     public var theremin: ThereminConfig = ThereminConfig()
+    public var joystickPad: JoystickPadConfig = JoystickPadConfig()
 
     public init() {}
 
@@ -95,6 +96,7 @@ public struct PawvisSettings: Codable, Equatable, Sendable {
         case gestures, customGestures, trainedGestures, voiceControl, overlay, general
         case attention
         case theremin
+        case joystickPad
         case dictation // legacy (pre-voice-control builds)
     }
 
@@ -108,6 +110,7 @@ public struct PawvisSettings: Codable, Equatable, Sendable {
         try c.encode(general, forKey: .general)
         try c.encode(attention, forKey: .attention)
         try c.encode(theremin, forKey: .theremin)
+        try c.encode(joystickPad, forKey: .joystickPad)
         // The legacy `dictation` key is read-only (decode migration) and is
         // deliberately not re-encoded.
     }
@@ -125,6 +128,8 @@ public struct PawvisSettings: Codable, Equatable, Sendable {
             ?? AttentionConfig()
         theremin = (try? c.decodeIfPresent(ThereminConfig.self, forKey: .theremin))
             ?? ThereminConfig()
+        joystickPad = (try? c.decodeIfPresent(JoystickPadConfig.self, forKey: .joystickPad))
+            ?? JoystickPadConfig()
         if let v = try? c.decodeIfPresent(VoiceControlConfig.self, forKey: .voiceControl) {
             voiceControl = v
         } else if let legacy = try? c.decodeIfPresent(LegacyDictationConfig.self, forKey: .dictation) {
