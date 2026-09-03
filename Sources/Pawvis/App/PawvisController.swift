@@ -75,6 +75,12 @@ final class PawvisController: ObservableObject {
 
     init(settingsStore: SettingsStore) {
         self.settingsStore = settingsStore
+        // An unlocked joystick pad swallows the clicks under it, so it never
+        // survives a launch: whoever unlocked it last time has to mean it
+        // again. Before the snapshot below, so nothing re-applies it.
+        if settingsStore.settings.joystickPad.movable {
+            settingsStore.settings.joystickPad.movable = false
+        }
         let settings = settingsStore.settings
         engine = GestureEngine(config: settings.gestures)
         attention.setConfig(settings.attention.gateConfig())
@@ -182,7 +188,7 @@ final class PawvisController: ObservableObject {
                 // mapping put the cursor.
                 guard self.trackingActive, !self.cameraBorrowed else { return }
                 self.releaseEverything()
-                self.engine.reset()
+                self.resetEngine()
                 self.handsDetected = 0
                 self.grabbing = false
             }
@@ -227,12 +233,6 @@ final class PawvisController: ObservableObject {
             }
         }
 
-        // An unlocked joystick pad swallows the clicks under it, so it never
-        // survives a launch: whoever unlocked it last time has to mean it
-        // again.
-        if settingsStore.settings.joystickPad.movable {
-            settingsStore.settings.joystickPad.movable = false
-        }
         overlay.onJoystickPadMoved = { [weak self] centre in
             guard let self else { return }
             var pad = self.settingsStore.settings.joystickPad
@@ -248,7 +248,7 @@ final class PawvisController: ObservableObject {
             }
             .store(in: &cancellables)
 
-        apply(settings: settings)
+        apply(settings: settingsStore.settings)
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -357,7 +357,7 @@ final class PawvisController: ObservableObject {
     /// `endTraining`'s post-training reconcile can apply exactly the same
     /// effects instead of a hand-maintained duplicate that could drift.
     private func activateTrackingEffects() {
-        engine.reset()
+        resetEngine()
         throttle.reset()
         attention.reset()
         attentionPaused = false
@@ -432,6 +432,14 @@ final class PawvisController: ObservableObject {
         watchdogTimer = nil
     }
 
+    /// The engine's reset, plus the joystick's seat: a reset forgets nothing
+    /// about the steered position, but the real pointer is where steering
+    /// should resume from, and only the app knows where that is.
+    private func resetEngine() {
+        engine.reset()
+        engine.seedJoystick(at: projector.toNormalized(appKitPoint: NSEvent.mouseLocation))
+    }
+
     /// The one force-release path: the engine's held press unwinds through
     /// the same paced posting queue as every other event, then the mouse's
     /// own bookkeeping lets go of anything left. stopTracking, the training
@@ -479,7 +487,7 @@ final class PawvisController: ObservableObject {
         pauseReason = "Paused on the lock screen"
         mouse.apply(engine.forceRelease(at: CACurrentMediaTime()))
         mouse.releaseAllButtons()
-        engine.reset() // stale press/arm state must not survive into resume
+        resetEngine() // stale press/arm state must not survive into resume
         camera.stop()
         overlay.hide()
         handsDetected = 0
@@ -506,7 +514,7 @@ final class PawvisController: ObservableObject {
         pausedForLock = false
         pauseReason = nil
         guard trackingActive else { return }
-        engine.reset()
+        resetEngine()
         throttle.reset()
         attention.reset()
         signal.reset()
@@ -534,7 +542,7 @@ final class PawvisController: ObservableObject {
             guard attentionPaused else { return }
             attentionPaused = false
             guard trackingActive, !cameraBorrowed else { return }
-            engine.reset()
+            resetEngine()
             overlay.show()
             Log.app.info("Control resumed: facing the screen again")
         } else {
@@ -546,7 +554,7 @@ final class PawvisController: ObservableObject {
             // through the same paced path every other pause uses, so a stuck
             // synthetic button stays impossible even across that race.
             releaseEverything()
-            engine.reset()
+            resetEngine()
             handsDetected = 0
             grabbing = false
             controlArmed = true
@@ -628,7 +636,7 @@ final class PawvisController: ObservableObject {
             // Let go of anything in flight and hide the overlay; the camera
             // keeps running, now feeding only the borrower.
             releaseEverything()
-            engine.reset()
+            resetEngine()
             overlay.hide()
         } else {
             // Camera only — same permission flow as tracking, no overlay,
@@ -776,7 +784,7 @@ final class PawvisController: ObservableObject {
         if cameraFailure == nil {
             Log.app.error("Camera failure while tracking: \(reason, privacy: .public)")
             releaseEverything()
-            engine.reset()
+            resetEngine()
             handsDetected = 0
             grabbing = false
             // Remember how many frames had been captured when the failure
@@ -804,7 +812,7 @@ final class PawvisController: ObservableObject {
         guard cameraFailure != nil, trackingActive else { return }
         cameraFailure = nil
         failureFrameMark = nil
-        engine.reset()
+        resetEngine()
         overlay.endFailure()
         gestureNotice = (text: "🐾 Camera is back",
                          until: CACurrentMediaTime() + Self.gestureNoticeSeconds)
@@ -820,7 +828,7 @@ final class PawvisController: ObservableObject {
         asleep = true
         guard trackingActive else { return }
         releaseEverything()
-        engine.reset()
+        resetEngine()
         Log.app.info("System sleeping; released buttons and paused the watchdog")
     }
 

@@ -98,11 +98,14 @@ func runSelfTest() -> Int32 {
     joystickConfig.interactionBox = InteractionBox(xMin: 0, xMax: 1, yMin: 0, yMax: 1)
     joystickConfig.smoothing = OneEuroFilter.Params(minCutoff: 1e9, beta: 0, dCutoff: 1e9)
     let joystickEngine = GestureEngine(config: joystickConfig)
-    let (_, centred) = joystickEngine.process(HandFrame(time: 0, hands: [hand]))
+    var centred = joystickEngine.process(HandFrame(time: 0, hands: [hand])).overlay
+    for i in 1...5 { // the centre is captured once the hand has held still
+        centred = joystickEngine.process(HandFrame(time: Double(i) / 30, hands: [hand])).overlay
+    }
     check("joystick.armsAtScreenCentre", centred.cursor == Vec2(0.5, 0.5) && centred.joystick != nil)
     let pushed = Hand(chirality: .right, confidence: 1, joints: joints.mapValues { $0 + Vec2(0.2, 0) })
     var steered: Vec2?
-    for i in 1...10 {
+    for i in 6...16 {
         steered = joystickEngine.process(HandFrame(time: Double(i) / 30, hands: [pushed])).overlay.cursor
     }
     check("joystick.offsetSteersRight", (steered?.x ?? 0) > 0.5 && steered?.y == 0.5)

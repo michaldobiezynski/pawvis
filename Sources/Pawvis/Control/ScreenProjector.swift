@@ -31,4 +31,14 @@ struct ScreenProjector {
             x: targetRect.minX + norm.x * targetRect.width,
             y: targetRect.minY + norm.y * targetRect.height)
     }
+
+    /// The inverse, from an AppKit screen point (origin at the bottom-left
+    /// of the primary display, y up): where a real pointer sits in engine
+    /// space, clamped to the unit square.
+    func toNormalized(appKitPoint point: NSPoint) -> Vec2 {
+        let main = CGDisplayBounds(CGMainDisplayID())
+        let cg = CGPoint(x: point.x, y: main.height - point.y)
+        return Vec2((cg.x - targetRect.minX) / max(targetRect.width, 1),
+                    (cg.y - targetRect.minY) / max(targetRect.height, 1)).clampedToUnit()
+    }
 }

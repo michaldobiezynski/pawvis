@@ -1,8 +1,8 @@
 import AppKit
 import PawvisCore
 
-/// The joystick pad: a small always-on-top HUD that shows the stick — its
-/// centre, dead zone, throw ring and where the hand is pushing — whenever
+/// The joystick pad: a small always-on-top HUD showing the stick (its
+/// centre, dead zone, throw ring and where the hand is pushing) whenever
 /// the cursor is in joystick mode. Drawn like a heads-up display: thin cyan
 /// rings on a dark translucent disc, a glowing puck for the hand. Click-
 /// through, unless the user unlocks it to drag it somewhere else.
@@ -12,9 +12,17 @@ final class JoystickPadOverlay {
     private let view = JoystickPadView()
     private var config = JoystickPadConfig()
     private var visible = false
-    /// True while our own layout moves the window, so the move notification
-    /// that follows is not mistaken for a drag.
-    private var layingOut = false
+    /// The frame our own layout last gave the window: a move notification
+    /// that lands there is ours, not a drag.
+    private var lastLaidOutFrame: NSRect?
+    /// What the face last drew, so a still hand costs no redraws.
+    private struct Rendered: Equatable {
+        var offset: Vec2
+        var deflection: Double
+        var armed: Bool
+        var held: NSColor?
+    }
+    private var lastRendered: Rendered?
     /// A drag ended with the pad's centre here (a fraction of the usable
     /// area), for the settings to persist.
     var onMoved: ((Vec2) -> Void)?
@@ -63,6 +71,9 @@ final class JoystickPadOverlay {
 
     func render(stick: JoystickOverlay, armed: Bool, held: NSColor?) {
         guard visible else { return }
+        let next = Rendered(offset: stick.offset, deflection: stick.deflection, armed: armed, held: held)
+        guard next != lastRendered else { return }
+        lastRendered = next
         view.offset = stick.offset
         view.deflection = stick.deflection
         view.armed = armed
@@ -98,7 +109,9 @@ final class JoystickPadOverlay {
         NotificationCenter.default.addObserver(
             forName: NSWindow.didMoveNotification, object: panel, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.panelMoved() }
+            // Delivered inline (the queue is main): a hop would land after
+            // our own layout had moved on, and read as a drag.
+            MainActor.assumeIsolated { self?.panelMoved() }
         }
         self.panel = panel
         return panel
@@ -116,13 +129,13 @@ final class JoystickPadOverlay {
         let frame = NSRect(
             x: area.minX + centre.x - size / 2, y: area.minY + centre.y - size / 2,
             width: size, height: size)
-        layingOut = true
+        lastLaidOutFrame = frame
         panel.setFrame(frame, display: true)
-        layingOut = false
     }
 
     private func panelMoved() {
-        guard !layingOut, config.movable, let panel, let screen = Self.screen else { return }
+        guard config.movable, let panel, panel.frame != lastLaidOutFrame,
+              let screen = Self.screen else { return }
         let area = screen.visibleFrame
         let centre = Vec2(panel.frame.midX - area.minX, panel.frame.midY - area.minY)
         onMoved?(JoystickPadConfig.customCentre(for: centre, inAreaOfSize: Vec2(area.width, area.height)))
