@@ -24,6 +24,17 @@ final class OverlayController {
     /// Notices live in their own click-through-exempt panel so they can be
     /// dismissed; the overlay windows below never receive a mouse event.
     private let statusPill = StatusPillOverlay()
+    /// The joystick pad: its own small always-on-top panel, shown whenever
+    /// a frame carries the stick (joystick cursor mode) and hidden with the
+    /// rest of the overlay.
+    private let joystickPad = JoystickPadOverlay()
+
+    /// A drag of the joystick pad ended with its centre here (a fraction of
+    /// the usable area), for the settings to persist.
+    var onJoystickPadMoved: ((Vec2) -> Void)? {
+        get { joystickPad.onMoved }
+        set { joystickPad.onMoved = newValue }
+    }
 
     init() {
         rebuildWindows()
@@ -39,12 +50,17 @@ final class OverlayController {
         let captureChanged = config.showInScreenCapture != self.config.showInScreenCapture
         self.config = config
         statusPill.showInScreenCapture = config.showInScreenCapture
+        joystickPad.showInScreenCapture = config.showInScreenCapture
         if !config.showStatusPill {
             statusPill.hide()
         }
         if captureChanged {
             applySharing()
         }
+    }
+
+    func setJoystickPad(_ pad: JoystickPadConfig, tuning: GestureConfig) {
+        joystickPad.setConfig(pad, tuning: tuning)
     }
 
     /// Overlay windows are excluded from screenshots/recordings by default
@@ -62,6 +78,7 @@ final class OverlayController {
     func hide() {
         visible = false
         statusPill.hide()
+        joystickPad.hide()
         windows.forEach { window in
             window.contentOverlayView.clear()
             window.orderOut(nil)
@@ -78,6 +95,7 @@ final class OverlayController {
     func parkForFailure(_ message: String, now: TimeInterval) {
         guard visible else { return }
         windows.forEach { $0.contentOverlayView.clear() }
+        joystickPad.hide()
         guard config.showStatusPill else { return }
         statusPill.present(
             .init(text: "⚠️ \(message)",
@@ -125,6 +143,15 @@ final class OverlayController {
             : overlay.middleGrabbed ? PawvisTheme.fuchsia
             : PawvisTheme.purple
         prevGrabbed = anyGrab
+
+        // The pad follows the mode, not a switch: a frame with a stick shows
+        // it, a frame without (direct mode) hides it.
+        if let stick = overlay.joystick {
+            joystickPad.show()
+            joystickPad.render(stick: stick, armed: overlay.armed, held: anyGrab ? grabTint : nil)
+        } else {
+            joystickPad.hide()
+        }
 
         for window in windows {
             var model = OverlayRenderModel()

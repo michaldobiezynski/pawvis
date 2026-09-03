@@ -87,9 +87,38 @@ func runSelfTest() -> Int32 {
     check("engine.syntheticHandYieldsCursor", overlay.cursor != nil)
     check("engine.overlayHasFingertips", !(overlay.hands.first?.fingertips.isEmpty ?? true))
 
+    // Joystick mode: the first frame captures the centre, and a hand held
+    // off it steers the cursor that way; the pad's maths keeps the disc on
+    // screen.
+    var joystickConfig = GestureConfig.default
+    joystickConfig.controlTrigger = .anyHand
+    joystickConfig.cursorMode = .joystick
+    joystickConfig.mirrorCamera = false
+    joystickConfig.reachMode = .manual
+    joystickConfig.interactionBox = InteractionBox(xMin: 0, xMax: 1, yMin: 0, yMax: 1)
+    joystickConfig.smoothing = OneEuroFilter.Params(minCutoff: 1e9, beta: 0, dCutoff: 1e9)
+    let joystickEngine = GestureEngine(config: joystickConfig)
+    let (_, centred) = joystickEngine.process(HandFrame(time: 0, hands: [hand]))
+    check("joystick.armsAtScreenCentre", centred.cursor == Vec2(0.5, 0.5) && centred.joystick != nil)
+    let pushed = Hand(chirality: .right, confidence: 1, joints: joints.mapValues { $0 + Vec2(0.2, 0) })
+    var steered: Vec2?
+    for i in 1...10 {
+        steered = joystickEngine.process(HandFrame(time: Double(i) / 30, hands: [pushed])).overlay.cursor
+    }
+    check("joystick.offsetSteersRight", (steered?.x ?? 0) > 0.5 && steered?.y == 0.5)
+    var pad = JoystickPadConfig()
+    pad.anchor = .topLeft
+    let padCentre = pad.centre(inAreaOfSize: Vec2(1440, 860))
+    check("joystick.padStaysOnScreen",
+          padCentre.x == JoystickPadConfig.margin + JoystickPadConfig.diameter / 2
+          && padCentre.y == 860 - JoystickPadConfig.margin - JoystickPadConfig.diameter / 2)
+
     // Settings roundtrip.
     var settings = PawvisSettings.default
     settings.gestures.pinchEngageRatio = 0.42
+    settings.gestures.cursorMode = .joystick
+    settings.joystickPad.opacity = 0.5
+    settings.joystickPad.anchor = .custom
     if let data = try? JSONEncoder().encode(settings),
        let decoded = try? JSONDecoder().decode(PawvisSettings.self, from: data) {
         check("settings.roundtrip", decoded == settings)

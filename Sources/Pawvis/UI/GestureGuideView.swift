@@ -75,7 +75,9 @@ struct GestureGuideView: View {
             Row(symbol: "hand.raised.fill",
                 panel: "full-move",
                 title: "Move",
-                detail: "Hold your hand open, fingers up, and move it — the claw cursor rides your \(store.settings.gestures.pointerSource.inlineName). The ring around the claw tightens as the click gesture forms."),
+                detail: store.settings.gestures.cursorMode == .joystick
+                    ? "Joystick mode: the spot where your open hand arms becomes the centre. Push away from it to steer the cursor, faster the further you push; hold near the centre to stop. Make a fist to park, then reopen anywhere to carry on from where the cursor is."
+                    : "Hold your hand open, fingers up, and move it — the claw cursor rides your \(store.settings.gestures.pointerSource.inlineName). The ring around the claw tightens as the click gesture forms."),
             Row(symbol: "hand.point.up.left.fill",
                 panel: "full-click",
                 title: "Click",

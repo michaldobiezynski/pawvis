@@ -418,6 +418,71 @@ private struct MouseSettingsTab: View {
 
             Divider()
 
+            SettingRow(
+                title: "Cursor control",
+                caption: store.settings.gestures.cursorMode == .joystick
+                    ? "Joystick: the spot where you show your open hand becomes a centre, and pushing away from it steers the cursor, faster the further you push. Your hand barely moves, so it never has to leave the camera's view. Make a fist to park; reopen anywhere to steer on from where you left the cursor."
+                    : "Direct: the cursor is wherever your hand is, mapped from the camera's view onto the screen."
+            ) {
+                Picker("", selection: $store.settings.gestures.cursorMode) {
+                    ForEach(CursorMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+            }
+
+            if store.settings.gestures.cursorMode == .joystick {
+                LabeledSlider(
+                    label: "Dead zone",
+                    caption: "How far your hand may drift from the centre before the cursor moves at all. Wider = steadier when you hold still; narrower = quicker to respond.",
+                    value: $store.settings.gestures.joystickDeadZone,
+                    range: GestureConfig.joystickDeadZoneRange)
+
+                LabeledSlider(
+                    label: "Steering throw",
+                    caption: "How far you push for top speed. Shorter = a flick of the hand does it; longer = more room for fine control. Reach scales it with your distance from the camera.",
+                    value: $store.settings.gestures.joystickThrow,
+                    range: GestureConfig.joystickThrowRange)
+
+                LabeledSlider(
+                    label: "Top speed",
+                    caption: "Screen widths per second at full push.",
+                    value: $store.settings.gestures.joystickMaxSpeed,
+                    range: GestureConfig.joystickMaxSpeedRange)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Joystick pad")
+                        .font(.callout)
+                    CaptionText("The heads-up pad on screen shows the centre, the dead zone, the throw ring and where your hand is pushing. It sits above every window, the claw included.")
+                }
+
+                LabeledSlider(
+                    label: "Pad opacity",
+                    caption: nil,
+                    value: $store.settings.joystickPad.opacity,
+                    range: JoystickPadConfig.opacityRange)
+
+                SettingRow(title: "Pad position") {
+                    Picker("", selection: $store.settings.joystickPad.anchor) {
+                        ForEach(JoystickPadAnchor.allCases, id: \.self) { anchor in
+                            Text(anchor.displayName).tag(anchor)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 260)
+                }
+
+                SettingToggle(
+                    title: "Unlock the pad to drag it",
+                    caption: "Unlocked, the pad takes the mouse: drag it anywhere and it remembers the spot. Lock it again to make it click-through. It locks itself every time Pawvis starts.",
+                    isOn: $store.settings.joystickPad.movable)
+            }
+
+            Divider()
+
             VStack(alignment: .leading, spacing: 5) {
                 Text("Click — mouse tap")
                     .font(.callout)
@@ -549,7 +614,7 @@ private struct MouseSettingsTab: View {
                 Button("Reset gestures to defaults") {
                     store.settings.gestures = .default
                 }
-                CaptionText("Restores the control trigger, sensitivity, right-click, middle-click, scrolling, dwell click, the pointer source, the tracking-off wave, smoothing, reach, and timing to the tuned defaults.")
+                CaptionText("Restores the control trigger, cursor control, sensitivity, right-click, middle-click, scrolling, dwell click, the pointer source, the tracking-off wave, smoothing, reach, and timing to the tuned defaults.")
             }
         }
     }

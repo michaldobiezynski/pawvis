@@ -227,6 +227,20 @@ final class PawvisController: ObservableObject {
             }
         }
 
+        // An unlocked joystick pad swallows the clicks under it, so it never
+        // survives a launch: whoever unlocked it last time has to mean it
+        // again.
+        if settingsStore.settings.joystickPad.movable {
+            settingsStore.settings.joystickPad.movable = false
+        }
+        overlay.onJoystickPadMoved = { [weak self] centre in
+            guard let self else { return }
+            var pad = self.settingsStore.settings.joystickPad
+            pad.anchor = .custom
+            pad.customCentre = centre
+            self.settingsStore.settings.joystickPad = pad
+        }
+
         settingsStore.$settings
             .removeDuplicates()
             .sink { [weak self] newSettings in
@@ -1013,6 +1027,7 @@ final class PawvisController: ObservableObject {
         // rather than waiting on a verdict change the gate will never emit.
         if attentionPaused, attention.attentive { attentionDidChange(true) }
         overlay.setConfig(settings.overlay)
+        overlay.setJoystickPad(settings.joystickPad, tuning: settings.gestures)
         voice.setConfig(settings.voiceControl)
         voice.transcriptOverlay.showInScreenCapture = settings.overlay.showInScreenCapture
         voice.autopilotPanel.showInScreenCapture = settings.overlay.showInScreenCapture
